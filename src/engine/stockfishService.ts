@@ -29,12 +29,11 @@ export class StockfishService {
   public async init(): Promise<void> {
     if (this.isInitialized && this.worker) return;
 
-    return new Promise(async (resolve, reject) => {
+    return new Promise(async (resolve) => {
       try {
         try {
           this.worker = new Worker('/stockfish.js');
-        } catch (e) {
-          // Fallback via Blob for webviews/restricted worker environments
+        } catch {
           const response = await fetch('/stockfish.js');
           const scriptText = await response.text();
           const blob = new Blob([scriptText], { type: 'application/javascript' });
@@ -53,7 +52,6 @@ export class StockfishService {
           console.error('Stockfish Worker Error:', err);
         };
 
-        // Initialize UCI
         this.sendCommand('uci');
         await this.waitForResponse((line) => line === 'uciok', 4000);
         this.sendCommand('isready');
@@ -63,7 +61,6 @@ export class StockfishService {
         resolve();
       } catch (err) {
         console.error('Failed to initialize Stockfish:', err);
-        // Fallback: mark initialized even if worker fails so app can degrade gracefully
         this.isInitialized = true;
         resolve();
       }
@@ -109,7 +106,6 @@ export class StockfishService {
     return this.runSequentially(async () => {
       await this.init();
 
-      // Map difficulty level 1-10 to Stockfish parameters
       const skillLevel = Math.min(20, Math.max(0, (level - 1) * 2));
       const depth = Math.min(15, Math.max(2, Math.floor(level * 1.4)));
       const movetime = Math.min(1500, Math.max(200, level * 120));
@@ -124,7 +120,7 @@ export class StockfishService {
       );
 
       const parts = bestMoveLine.split(' ');
-      const moveStr = parts[1]; // e.g. "e2e4" or "e7e8q"
+      const moveStr = parts[1];
       if (!moveStr || moveStr === '(none)') {
         throw new Error('No valid move found');
       }
@@ -141,12 +137,28 @@ export class StockfishService {
     return this.runSequentially(async () => {
       await this.init();
 
+      // Handle terminal positions immediately without invoking engine search
+      try {
+        const tempChess = new Chess(fen);
+        if (tempChess.isCheckmate()) {
+          const turnIsW = tempChess.turn() === 'w';
+          return { score: turnIsW ? -10000 : 10000, depth };
+        }
+        if (tempChess.isDraw() || tempChess.isStalemate() || tempChess.isInsufficientMaterial()) {
+          return { score: 0, depth };
+        }
+      } catch {
+        // continue to engine if FEN parsing fails
+      }
+
+      // Always reset Skill Level to maximum (20) for accurate evaluation, hints, and game review
+      this.sendCommand('setoption name Skill Level value 20');
       this.sendCommand(`position fen ${fen}`);
       this.sendCommand(`go depth ${depth}`);
 
       let latestScore = 0;
       let latestBestMove: string | undefined;
-      let turnIsWhite = fen.split(' ')[1] === 'w';
+      const turnIsWhite = fen.split(' ')[1] === 'w';
 
       return new Promise((resolve) => {
         const timeout = setTimeout(() => {
@@ -154,47 +166,45 @@ export class StockfishService {
           resolve({ score: latestScore, bestMoveUci: latestBestMove, depth });
         }, 3500);
 
-      const listener = (line: string) => {
-        if (line.includes('score cp ')) {
-          const match = line.match(/score cp (-?\d+)/);
-          if (match) {
-            let cp = parseInt(match[1], 10);
-            // UCI score cp is from the perspective of the side whose turn it is
-            // Standardize to White's perspective (+ = White advantage)
-            latestScore = turnIsWhite ? cp : -cp;
+        const listener = (line: string) => {
+          if (line.includes('score cp ')) {
+            const match = line.match(/score cp (-?\d+)/);
+            if (match) {
+              const cp = parseInt(match[1], 10);
+              latestScore = turnIsWhite ? cp : -cp;
+            }
+          } else if (line.includes('score mate ')) {
+            const match = line.match(/score mate (-?\d+)/);
+            if (match) {
+              const mateIn = parseInt(match[1], 10);
+              const mateScore = (mateIn > 0 ? 10000 : -10000) - mateIn * 100;
+              latestScore = turnIsWhite ? mateScore : -mateScore;
+            }
           }
-        } else if (line.includes('score mate ')) {
-          const match = line.match(/score mate (-?\d+)/);
-          if (match) {
-            const mateIn = parseInt(match[1], 10);
-            const mateScore = (mateIn > 0 ? 10000 : -10000) - mateIn * 100;
-            latestScore = turnIsWhite ? mateScore : -mateScore;
+
+          if (line.includes(' pv ')) {
+            const match = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
+            if (match) {
+              latestBestMove = match[1];
+            }
           }
-        }
 
-        if (line.includes(' pv ')) {
-          const match = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
-          if (match) {
-            latestBestMove = match[1];
+          if (line.startsWith('bestmove')) {
+            const parts = line.split(' ');
+            if (parts[1] && parts[1] !== '(none)') {
+              latestBestMove = parts[1];
+            }
+            cleanup();
+            resolve({ score: latestScore, bestMoveUci: latestBestMove, depth });
           }
-        }
+        };
 
-        if (line.startsWith('bestmove')) {
-          const parts = line.split(' ');
-          if (parts[1] && parts[1] !== '(none)') {
-            latestBestMove = parts[1];
-          }
-          cleanup();
-          resolve({ score: latestScore, bestMoveUci: latestBestMove, depth });
-        }
-      };
+        const cleanup = () => {
+          clearTimeout(timeout);
+          this.messageListeners = this.messageListeners.filter((l) => l !== listener);
+        };
 
-      const cleanup = () => {
-        clearTimeout(timeout);
-        this.messageListeners = this.messageListeners.filter((l) => l !== listener);
-      };
-
-      this.messageListeners.push(listener);
+        this.messageListeners.push(listener);
       });
     });
   }
@@ -250,7 +260,16 @@ export class StockfishService {
     const analysisResults: MoveAnalysis[] = [];
     const totalMoves = playedMoves.length;
 
-    let previousEval = 20; // Starting position is approximately +20cp for White
+    if (totalMoves === 0) {
+      return {
+        moves: [],
+        whiteStats: { best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0, accuracy: 100 },
+        blackStats: { best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0, accuracy: 100 },
+      };
+    }
+
+    // Cache evalBefore so each position is only evaluated ONCE instead of twice!
+    let cachedEvalBefore: EvalResult = await this.evaluatePosition(playedMoves[0].fenBefore, 10);
 
     for (let i = 0; i < playedMoves.length; i++) {
       const m = playedMoves[i];
@@ -258,21 +277,21 @@ export class StockfishService {
         onProgress(i + 1, totalMoves);
       }
 
-      // 1. Evaluate position before move at depth 10 (consistent with live hint depth 10)
-      const evalBefore = await this.evaluatePosition(m.fenBefore, 10);
-      // 2. Evaluate position after move at depth 10
+      const evalBefore =
+        i === 0 || playedMoves[i - 1].fenAfter !== m.fenBefore
+          ? i === 0
+            ? cachedEvalBefore
+            : await this.evaluatePosition(m.fenBefore, 10)
+          : cachedEvalBefore;
+
       const evalAfter = await this.evaluatePosition(m.fenAfter, 10);
+      cachedEvalBefore = evalAfter;
 
       const isWhite = m.color === 'w';
-
-      // Score from the moving player's point of view
       const playerEvalBefore = isWhite ? evalBefore.score : -evalBefore.score;
       const playerEvalAfter = isWhite ? evalAfter.score : -evalAfter.score;
-
-      // Delta: how much did the moving player lose? (negative is loss)
       const scoreDelta = playerEvalAfter - playerEvalBefore;
 
-      // Convert bestMoveUci to SAN for display
       const chessBefore = new Chess(m.fenBefore);
       let bestMoveSan: string | undefined;
       if (evalBefore.bestMoveUci) {
@@ -289,7 +308,6 @@ export class StockfishService {
         }
       }
 
-      // Check if there was a missed check opportunity (only valid if best move was a check)
       const isActualMoveCheck = m.san.includes('+') || m.san.includes('#');
       let missedCheck = false;
       let checkAlternativeSan: string | undefined;
@@ -299,20 +317,18 @@ export class StockfishService {
         checkAlternativeSan = bestMoveSan;
       }
 
-      // Classify quality
       let quality: MoveQuality = 'good';
       let commentary = '';
 
       const isEngineBest = (bestMoveSan && bestMoveSan === m.san) || m.hintFollowed;
 
       if (m.hintFollowed) {
-        // Player directly followed the in-game Stockfish Hint!
         quality = 'best';
         bestMoveSan = m.san;
         commentary = '🌟 대국 중 추천된 최적 힌트를 정확히 착수한 최선의 수입니다.';
       } else if (isEngineBest || scoreDelta >= -15) {
         quality = 'best';
-        bestMoveSan = m.san; // Player's move was virtually equal to or better than best move
+        bestMoveSan = m.san;
         commentary = '🌟 엔진이 추천하는 가장 최선의 수입니다.';
       } else if (scoreDelta >= -60) {
         quality = 'good';
@@ -351,8 +367,6 @@ export class StockfishService {
         missedCheck,
         commentary,
       });
-
-      previousEval = evalAfter.score;
     }
 
     const calcStats = (color: PieceColor): PlayerStats => {
@@ -366,7 +380,6 @@ export class StockfishService {
       const mistake = colorMoves.filter((m) => m.quality === 'mistake').length;
       const blunder = colorMoves.filter((m) => m.quality === 'blunder').length;
 
-      // Chess.com style accuracy formula approximation
       const positiveMoves = best * 100 + good * 85 + inaccuracy * 60 + mistake * 30 + blunder * 10;
       const accuracy = Math.round(positiveMoves / colorMoves.length);
 

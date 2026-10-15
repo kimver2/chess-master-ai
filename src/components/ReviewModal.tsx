@@ -59,7 +59,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
   const [showBestMove, setShowBestMove] = useState<boolean>(() => {
     const playerMoves = reviewData.moves.filter((m) => m.color === playerColor);
-    const initialMove = playerMoves[0];
+    const firstBad = playerMoves.findIndex((m) => isBadMove(m));
+    const initialMove = playerMoves[firstBad !== -1 ? firstBad : 0];
     return isBadMove(initialMove);
   });
 

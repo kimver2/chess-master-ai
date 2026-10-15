@@ -57,11 +57,28 @@ interface PlayedMoveRecord {
   from: string;
   to: string;
   promotion?: string;
+  captured?: string;
   fenBefore: string;
   fenAfter: string;
   hintFollowed?: boolean;
   hintBestSan?: string;
 }
+
+const getPositionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
+
+// 3-fold repetition detection helper based on position history
+const checkThreefoldFromHistory = (moves: PlayedMoveRecord[]): boolean => {
+  if (moves.length < 8) return false;
+  const posCounts = new Map<string, number>();
+  posCounts.set('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -', 1);
+  for (const m of moves) {
+    const key = m.fenAfter.split(' ').slice(0, 4).join(' ');
+    const count = (posCounts.get(key) || 0) + 1;
+    if (count >= 3) return true;
+    posCounts.set(key, count);
+  }
+  return false;
+};
 
 export const App: React.FC = () => {
   // Navigation: 'play' | 'puzzle' | 'endgame'
@@ -120,6 +137,7 @@ export const App: React.FC = () => {
   const [playedMoves, setPlayedMoves] = useState<PlayedMoveRecord[]>([]);
   const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(null);
   const [isAiThinking, setIsAiThinking] = useState<boolean>(false);
+  const gameSessionRef = React.useRef<number>(1);
 
   // In-Game Move History Viewing (Live Stepper)
   // null = live board; -1 = starting board; 0..(playedMoves.length - 1) = board after ply i
@@ -300,6 +318,10 @@ export const App: React.FC = () => {
             setShowSettingsModal(false);
             return;
           }
+          if (activeTab !== 'play') {
+            setActiveTab('play');
+            return;
+          }
           if (isViewingHistory) {
             setViewPlyIndex(null);
             return;
@@ -317,7 +339,16 @@ export const App: React.FC = () => {
         listenerHandle.remove();
       }
     };
-  }, [showTourGuide, showOpeningModal, showExitConfirm, showGameOverModal, showReviewModal, showSettingsModal, isViewingHistory]);
+  }, [
+    showTourGuide,
+    showOpeningModal,
+    showExitConfirm,
+    showGameOverModal,
+    showReviewModal,
+    showSettingsModal,
+    activeTab,
+    isViewingHistory,
+  ]);
 
   // Keyboard navigation (ArrowLeft: previous move, ArrowRight: next move)
   useEffect(() => {
@@ -375,7 +406,7 @@ export const App: React.FC = () => {
 
   // Clock countdown interval
   useEffect(() => {
-    if (isGameOver || timeLimit === 'unlimited') return;
+    if (activeTab !== 'play' || isGameOver || timeLimit === 'unlimited') return;
 
     const interval = setInterval(() => {
       const turn = chess.turn();
@@ -386,6 +417,9 @@ export const App: React.FC = () => {
             handleTimeout('w');
             return 0;
           }
+          if (playerColor === 'w' && prev <= 31000 && (prev === 30000 || prev <= 10000)) {
+            soundManager.lowTime();
+          }
           return prev - 1000;
         });
       } else {
@@ -395,15 +429,20 @@ export const App: React.FC = () => {
             handleTimeout('b');
             return 0;
           }
+          if (playerColor === 'b' && prev <= 31000 && (prev === 30000 || prev <= 10000)) {
+            soundManager.lowTime();
+          }
           return prev - 1000;
         });
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [chess, isGameOver, timeLimit]);
+  }, [activeTab, chess, isGameOver, timeLimit, playerColor]);
 
   const handleTimeout = (loserColor: PieceColor) => {
+    gameSessionRef.current += 1;
+    setIsAiThinking(false);
     setIsGameOver(true);
     setGameOverReason('timeout');
     const outcome = loserColor === playerColor ? 'loss' : 'win';
@@ -419,21 +458,8 @@ export const App: React.FC = () => {
     }, 1200);
   };
 
-  // Real-time evaluation updater
-  const updateEvaluation = async (fen: string) => {
-    if (!showEvalBar) return;
-    setIsEvalLoading(true);
-    try {
-      const res = await stockfishService.evaluatePosition(fen, 8);
-      setEvalScore(res.score);
-    } catch (err) {
-      console.error('Eval error:', err);
-    } finally {
-      setIsEvalLoading(false);
-    }
-  };
-
   // Real-time evaluation updater for current displayed board (live or historical)
+  // Automatically updates when displayChess or showEvalBar changes, with cancellation
   useEffect(() => {
     if (!showEvalBar) return;
     let cancelled = false;
@@ -462,9 +488,6 @@ export const App: React.FC = () => {
     try {
       localStorage.setItem('chess_show_eval_bar', String(enabled));
     } catch {}
-    if (enabled) {
-      updateEvaluation(displayChess.fen());
-    }
   };
 
   const handleRequestHint = async () => {
@@ -472,17 +495,20 @@ export const App: React.FC = () => {
       setViewPlyIndex(null);
     }
     if (isGameOver || isAiThinking || isHintLoading || chess.turn() !== playerColor) return;
+    const session = gameSessionRef.current;
     setIsHintLoading(true);
     try {
       const hint = await stockfishService.getHint(chess.fen(), 10);
-      if (hint) {
+      if (hint && gameSessionRef.current === session) {
         setActiveHint(hint);
         soundManager.move();
       }
     } catch (e) {
       console.error('Hint error:', e);
     } finally {
-      setIsHintLoading(false);
+      if (gameSessionRef.current === session) {
+        setIsHintLoading(false);
+      }
     }
   };
 
@@ -492,11 +518,13 @@ export const App: React.FC = () => {
     newTime = timeLimit,
     newSide = chosenSide
   ) => {
+    const session = ++gameSessionRef.current;
     const newChess = new Chess();
     setChess(newChess);
     setViewPlyIndex(null);
     setPlayedMoves([]);
     setLastMove(null);
+    setIsAiThinking(false);
     setIsGameOver(false);
     setShowGameOverModal(false);
     setGameResult('ongoing');
@@ -524,18 +552,24 @@ export const App: React.FC = () => {
 
     // If AI is White, AI moves first!
     if (actualColor === 'b') {
-      setTimeout(() => triggerAiMove(newChess, newDifficulty), 500);
+      setTimeout(() => {
+        if (gameSessionRef.current === session) {
+          triggerAiMove(newChess, newDifficulty, [], actualColor, session);
+        }
+      }, 500);
     }
   };
 
   // Start Guided Opening Game
   const handleStartGuidedOpening = (opening: ChessOpening) => {
+    const session = ++gameSessionRef.current;
     const side: PieceColor = opening.recommendedSide || 'w';
     const newChess = new Chess();
     setChess(newChess);
     setViewPlyIndex(null);
     setPlayedMoves([]);
     setLastMove(null);
+    setIsAiThinking(false);
     setIsGameOver(false);
     setShowGameOverModal(false);
     setGameResult('ongoing');
@@ -560,7 +594,9 @@ export const App: React.FC = () => {
     if (side === 'b') {
       const firstMoveSan = opening.moves[0];
       setTimeout(() => {
-        executeAiGuidedMove(newChess, firstMoveSan, opening, 0, [], 'w');
+        if (gameSessionRef.current === session) {
+          executeAiGuidedMove(newChess, firstMoveSan, opening, 0, [], side, session);
+        }
       }, 500);
     }
   };
@@ -578,10 +614,12 @@ export const App: React.FC = () => {
     opening: ChessOpening,
     stepIdx: number,
     currentHistory: PlayedMoveRecord[],
-    overrideAiColor?: PieceColor
+    humanColor: PieceColor = playerColor,
+    session: number = gameSessionRef.current
   ) => {
+    if (gameSessionRef.current !== session) return;
     setIsAiThinking(true);
-    const aiColor: PieceColor = overrideAiColor || (playerColor === 'w' ? 'b' : 'w');
+    const movingColor: PieceColor = currentChess.turn();
     const fenBefore = currentChess.fen();
 
     try {
@@ -598,11 +636,12 @@ export const App: React.FC = () => {
         const moveRecord: PlayedMoveRecord = {
           ply,
           moveNumber: Math.floor(ply / 2) + 1,
-          color: aiColor,
+          color: movingColor,
           san: move.san,
           from: move.from,
           to: move.to,
           promotion: move.promotion,
+          captured: move.captured,
           fenBefore,
           fenAfter,
         };
@@ -610,10 +649,13 @@ export const App: React.FC = () => {
         const updatedMoves = [...currentHistory, moveRecord];
         setPlayedMoves(updatedMoves);
         setLastMove({ from: move.from, to: move.to });
-        const nextChess = new Chess(fenAfter);
+        const nextChess = new Chess();
+        try {
+          nextChess.loadPgn(currentChess.pgn());
+        } catch {
+          nextChess.load(fenAfter);
+        }
         setChess(nextChess);
-
-        updateEvaluation(fenAfter);
 
         if (nextChess.isCheck()) {
           soundManager.check();
@@ -630,12 +672,14 @@ export const App: React.FC = () => {
           setTimeout(() => setGuidedCompletionMessage(null), 6000);
         }
 
-        checkGameOver(nextChess, playerColor);
+        checkGameOver(nextChess, humanColor, updatedMoves);
       }
     } catch (err) {
       console.error('Guided AI move error:', err);
     } finally {
-      setIsAiThinking(false);
+      if (gameSessionRef.current === session) {
+        setIsAiThinking(false);
+      }
     }
   };
 
@@ -647,6 +691,7 @@ export const App: React.FC = () => {
     }
     if (isGameOver || isAiThinking || chess.turn() !== playerColor) return;
 
+    const session = gameSessionRef.current;
     const fenBefore = chess.fen();
     try {
       const move = chess.move({ from, to, promotion });
@@ -676,6 +721,7 @@ export const App: React.FC = () => {
         from,
         to,
         promotion: move.promotion,
+        captured: move.captured,
         fenBefore,
         fenAfter,
         hintFollowed,
@@ -685,16 +731,19 @@ export const App: React.FC = () => {
       const updatedMoves = [...playedMoves, moveRecord];
       setPlayedMoves(updatedMoves);
       setLastMove({ from, to });
-      const nextChess = new Chess(fenAfter);
+      const nextChess = new Chess();
+      try {
+        nextChess.loadPgn(chess.pgn());
+      } catch {
+        nextChess.load(fenAfter);
+      }
       setChess(nextChess);
-
-      updateEvaluation(fenAfter);
 
       if (nextChess.isCheck()) {
         soundManager.check();
       }
 
-      if (checkGameOver(nextChess, playerColor)) return;
+      if (checkGameOver(nextChess, playerColor, updatedMoves)) return;
 
       // Handle Guided Opening progression
       if (guidedOpening) {
@@ -710,13 +759,13 @@ export const App: React.FC = () => {
               `🎉 '${guidedOpening.nameKo}' 오프닝 수순 완료! 이제부터 스톡피쉬 AI와의 실전이 계속됩니다.`
             );
             setTimeout(() => setGuidedCompletionMessage(null), 6000);
-            triggerAiMove(nextChess, difficulty, updatedMoves);
+            triggerAiMove(nextChess, difficulty, updatedMoves, playerColor, session);
           } else {
             // Next move in book is AI's response
             setGuidedStep(nextStep);
             const aiSan = guidedOpening.moves[nextStep];
             setTimeout(() => {
-              executeAiGuidedMove(nextChess, aiSan, guidedOpening, nextStep, updatedMoves);
+              executeAiGuidedMove(nextChess, aiSan, guidedOpening, nextStep, updatedMoves, playerColor, session);
             }, 500);
           }
         } else {
@@ -726,11 +775,11 @@ export const App: React.FC = () => {
             `💡 가이드 수순과 다른 수를 두어 자유 실전 대국으로 전환되었습니다.`
           );
           setTimeout(() => setGuidedCompletionMessage(null), 4000);
-          triggerAiMove(nextChess, difficulty, updatedMoves);
+          triggerAiMove(nextChess, difficulty, updatedMoves, playerColor, session);
         }
       } else {
         // Normal AI Turn
-        triggerAiMove(nextChess, difficulty, updatedMoves);
+        triggerAiMove(nextChess, difficulty, updatedMoves, playerColor, session);
       }
     } catch {
       // invalid move
@@ -741,14 +790,19 @@ export const App: React.FC = () => {
   const triggerAiMove = async (
     currentChess: Chess,
     aiLevel: DifficultyLevel,
-    currentHistory = playedMoves
+    currentHistory = playedMoves,
+    humanColor: PieceColor = playerColor,
+    session: number = gameSessionRef.current
   ) => {
+    if (gameSessionRef.current !== session) return;
     setIsAiThinking(true);
-    const aiColor: PieceColor = playerColor === 'w' ? 'b' : 'w';
+    const movingAiColor: PieceColor = currentChess.turn();
     const fenBefore = currentChess.fen();
 
     try {
       const best = await stockfishService.getBestMove(fenBefore, aiLevel);
+      if (gameSessionRef.current !== session) return;
+
       if (best) {
         const move = currentChess.move({
           from: best.from,
@@ -768,11 +822,12 @@ export const App: React.FC = () => {
           const moveRecord: PlayedMoveRecord = {
             ply,
             moveNumber: Math.floor(ply / 2) + 1,
-            color: aiColor,
+            color: movingAiColor,
             san: move.san,
             from: best.from,
             to: best.to,
             promotion: move.promotion,
+            captured: move.captured,
             fenBefore,
             fenAfter,
           };
@@ -780,26 +835,49 @@ export const App: React.FC = () => {
           const updatedMoves = [...currentHistory, moveRecord];
           setPlayedMoves(updatedMoves);
           setLastMove({ from: best.from, to: best.to });
-          const nextChess = new Chess(fenAfter);
+          const nextChess = new Chess();
+          try {
+            nextChess.loadPgn(currentChess.pgn());
+          } catch {
+            nextChess.load(fenAfter);
+          }
           setChess(nextChess);
-
-          updateEvaluation(fenAfter);
 
           if (nextChess.isCheck()) {
             soundManager.check();
           }
 
-          checkGameOver(nextChess, playerColor);
+          checkGameOver(nextChess, humanColor, updatedMoves);
         }
       }
     } catch (err) {
       console.error('AI move error:', err);
     } finally {
-      setIsAiThinking(false);
+      if (gameSessionRef.current === session) {
+        setIsAiThinking(false);
+      }
     }
   };
 
-  const checkGameOver = (game: Chess, humanColor: PieceColor): boolean => {
+  const isThreefoldRepetitionInHistory = (history: PlayedMoveRecord[], currentFen: string): boolean => {
+    const targetKey = getPositionKey(currentFen);
+    let count = 0;
+    const initialKey = getPositionKey(new Chess().fen());
+    if (initialKey === targetKey) count++;
+    for (const m of history) {
+      if (getPositionKey(m.fenAfter) === targetKey) {
+        count++;
+        if (count >= 3) return true;
+      }
+    }
+    return false;
+  };
+
+  const checkGameOver = (
+    game: Chess,
+    humanColor: PieceColor,
+    history: PlayedMoveRecord[] = playedMoves
+  ): boolean => {
     if (game.isCheckmate()) {
       setIsGameOver(true);
       setActiveHint(null);
@@ -819,13 +897,15 @@ export const App: React.FC = () => {
       }, 1500);
       return true;
     }
-    if (game.isDraw() || game.isStalemate() || game.isThreefoldRepetition() || game.isInsufficientMaterial()) {
+
+    const isRepetition = game.isThreefoldRepetition() || isThreefoldRepetitionInHistory(history, game.fen());
+    if (game.isDraw() || game.isStalemate() || isRepetition || game.isInsufficientMaterial()) {
       setIsGameOver(true);
       setActiveHint(null);
       setGameOverReason(
         game.isStalemate()
           ? 'stalemate'
-          : game.isThreefoldRepetition()
+          : isRepetition
           ? 'threefold_repetition'
           : 'insufficient_material'
       );
@@ -841,26 +921,36 @@ export const App: React.FC = () => {
     return false;
   };
 
-  // Undo Move
+  // Undo Move (Restores moves accurately from history)
   const handleUndo = () => {
     setViewPlyIndex(null);
-    if (isGameOver || isAiThinking || playedMoves.length < 2) return;
-    chess.undo(); // undo AI
-    chess.undo(); // undo player
+    const minMoves = playerColor === 'w' ? 2 : 3;
+    if (isGameOver || isAiThinking || playedMoves.length < minMoves) return;
+    gameSessionRef.current += 1;
     soundManager.move();
     setActiveHint(null);
+
     const newHistory = playedMoves.slice(0, -2);
     setPlayedMoves(newHistory);
-    const nextChess = new Chess(chess.fen());
-    setChess(nextChess);
-    const prev = newHistory[newHistory.length - 1];
-    setLastMove(prev ? { from: prev.from, to: prev.to } : null);
-    updateEvaluation(nextChess.fen());
+
+    const restoredChess = new Chess();
+    for (const m of newHistory) {
+      restoredChess.move({ from: m.from, to: m.to, promotion: m.promotion || 'q' });
+    }
+    setChess(restoredChess);
+    const prevMove = newHistory[newHistory.length - 1];
+    setLastMove(prevMove ? { from: prevMove.from, to: prevMove.to } : null);
+
+    if (guidedOpening) {
+      setGuidedStep(newHistory.length);
+    }
   };
 
   // Resign
   const handleResign = () => {
     if (isGameOver) return;
+    gameSessionRef.current += 1;
+    setIsAiThinking(false);
     setIsGameOver(true);
     setActiveHint(null);
     setGameOverReason('resignation');
@@ -892,12 +982,17 @@ export const App: React.FC = () => {
     }
   };
 
-  // Material & captured pieces calculation
-  const calculatePiecesAndMaterial = (targetChess: Chess = displayChess) => {
+  // Material & captured pieces calculation (accurately tracks captures and promotions)
+  const calculatePiecesAndMaterial = (
+    targetChess: Chess = displayChess,
+    activeMoves: PlayedMoveRecord[] = (
+      isViewingHistory && viewPlyIndex !== null && viewPlyIndex >= 0
+        ? playedMoves.slice(0, viewPlyIndex + 1)
+        : (viewPlyIndex === -1 ? [] : playedMoves)
+    )
+  ) => {
+    const values: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
     const board = targetChess.board();
-    const counts = { w: { p: 0, n: 0, b: 0, r: 0, q: 0 }, b: { p: 0, n: 0, b: 0, r: 0, q: 0 } };
-    const startingCounts = { p: 8, n: 2, b: 2, r: 2, q: 1 };
-    const values = { p: 1, n: 3, b: 3, r: 5, q: 9 };
 
     let whiteScore = 0;
     let blackScore = 0;
@@ -906,28 +1001,36 @@ export const App: React.FC = () => {
       for (let c = 0; c < 8; c++) {
         const p = board[r][c];
         if (p && p.type !== 'k') {
-          counts[p.color][p.type]++;
-          if (p.color === 'w') whiteScore += values[p.type];
-          else blackScore += values[p.type];
+          if (p.color === 'w') whiteScore += values[p.type] || 0;
+          else blackScore += values[p.type] || 0;
         }
       }
     }
 
-    const whiteCaptured = {
-      p: Math.max(0, startingCounts.p - counts.b.p),
-      n: Math.max(0, startingCounts.n - counts.b.n),
-      b: Math.max(0, startingCounts.b - counts.b.b),
-      r: Math.max(0, startingCounts.r - counts.b.r),
-      q: Math.max(0, startingCounts.q - counts.b.q),
+    const whiteCaptured: Record<'p' | 'n' | 'b' | 'r' | 'q', number> = {
+      p: 0,
+      n: 0,
+      b: 0,
+      r: 0,
+      q: 0,
+    };
+    const blackCaptured: Record<'p' | 'n' | 'b' | 'r' | 'q', number> = {
+      p: 0,
+      n: 0,
+      b: 0,
+      r: 0,
+      q: 0,
     };
 
-    const blackCaptured = {
-      p: Math.max(0, startingCounts.p - counts.w.p),
-      n: Math.max(0, startingCounts.n - counts.w.n),
-      b: Math.max(0, startingCounts.b - counts.w.b),
-      r: Math.max(0, startingCounts.r - counts.w.r),
-      q: Math.max(0, startingCounts.q - counts.w.q),
-    };
+    for (const m of activeMoves) {
+      if (m.captured && (m.captured === 'p' || m.captured === 'n' || m.captured === 'b' || m.captured === 'r' || m.captured === 'q')) {
+        if (m.color === 'w') {
+          whiteCaptured[m.captured] += 1;
+        } else {
+          blackCaptured[m.captured] += 1;
+        }
+      }
+    }
 
     return {
       whiteCaptured,
@@ -1448,7 +1551,7 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleUndo}
-                    disabled={isGameOver || isAiThinking || playedMoves.length < 2}
+                    disabled={isGameOver || isAiThinking || playedMoves.length < (playerColor === 'w' ? 2 : 3)}
                     className="py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-zinc-300 text-[11px] font-semibold flex items-center justify-center gap-1 border border-zinc-800"
                     title="한 수 물리기"
                   >

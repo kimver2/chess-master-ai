@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Chess, Square, PieceSymbol, Color } from 'chess.js';
 import { ChessPiece, ChessPieceDefs } from './ChessPieces';
 import { PieceColor, PieceTheme, BoardTheme } from '../types/chess';
@@ -105,6 +105,12 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 }) => {
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [pendingPromotion, setPendingPromotion] = useState<{ from: string; to: string } | null>(null);
+
+  const currentFen = chess.fen();
+  useEffect(() => {
+    setSelectedSquare(null);
+    setPendingPromotion(null);
+  }, [currentFen, interactive]);
 
   const isFlipped = orientation === 'black';
   const displayFiles = isFlipped ? [...FILES].reverse() : FILES;

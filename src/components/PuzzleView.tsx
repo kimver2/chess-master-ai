@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { ChessBoard, BoardArrow } from './ChessBoard';
 import { PieceTheme, BoardTheme } from '../types/chess';
@@ -33,6 +33,8 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
   const [chess, setChess] = useState<Chess | null>(null);
   const [currentStep, setCurrentStep] = useState<number>(0);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
+  const [isOpponentMoving, setIsOpponentMoving] = useState<boolean>(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string>('');
   const [feedbackType, setFeedbackType] = useState<'info' | 'success' | 'error'>('info');
   const [showHint, setShowHint] = useState<boolean>(false);
@@ -50,11 +52,24 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
     return set;
   });
 
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
   const filteredPuzzles = TACTICS_PUZZLES.filter(
     (p) => selectedDifficulty === 'all' || p.difficulty === selectedDifficulty
   );
 
   const startPuzzle = (puzzle: TacticsPuzzle) => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsOpponentMoving(false);
     const newChess = new Chess(puzzle.fen);
     setActivePuzzle(puzzle);
     setChess(newChess);
@@ -83,6 +98,8 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
     if (currentIndex >= 0 && currentIndex < TACTICS_PUZZLES.length - 1) {
       startPuzzle(TACTICS_PUZZLES[currentIndex + 1]);
     } else {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setIsOpponentMoving(false);
       setActivePuzzle(null);
     }
   };
@@ -96,7 +113,7 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
   };
 
   const handlePlayerMove = (from: string, to: string, promotion = 'q') => {
-    if (!chess || !activePuzzle || isSuccess) return;
+    if (!chess || !activePuzzle || isSuccess || isOpponentMoving || feedbackType === 'error') return;
 
     try {
       const move = chess.move({ from, to, promotion });
@@ -141,12 +158,15 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
         }
 
         // If there is an opponent response move
+        setIsOpponentMoving(true);
         const opponentExpectedSan = activePuzzle.solutionMoves[nextStepIndex];
         setCurrentStep(nextStepIndex + 1);
         setFeedbackType('info');
         setFeedbackMessage('좋은 수입니다! 상대가 응수합니다...');
 
-        setTimeout(() => {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => {
+          setIsOpponentMoving(false);
           try {
             const aiMove = nextChess.move(opponentExpectedSan);
             if (aiMove) {
@@ -168,7 +188,8 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
         setFeedbackMessage('체크메이트가 되지 않았습니다! 다시 시도해보세요.');
 
         // Auto undo after 1.1 seconds
-        setTimeout(() => {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => {
           resetCurrentPuzzle();
         }, 1100);
       }
@@ -224,7 +245,11 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
         <div className="flex items-center justify-between">
           <button
             type="button"
-            onClick={() => setActivePuzzle(null)}
+            onClick={() => {
+              if (timerRef.current) clearTimeout(timerRef.current);
+              setIsOpponentMoving(false);
+              setActivePuzzle(null);
+            }}
             className="flex items-center gap-1 text-xs font-bold text-zinc-400 hover:text-amber-400 py-1.5 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800 transition-colors"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
@@ -284,7 +309,7 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
             chess={chess}
             orientation={activePuzzle.playerColor === 'w' ? 'white' : 'black'}
             onMove={handlePlayerMove}
-            interactive={!isSuccess}
+            interactive={!isSuccess && !isOpponentMoving && feedbackType !== 'error'}
             lastMove={lastMove}
             highlightSquares={hintHighlights}
             arrows={hintArrows}

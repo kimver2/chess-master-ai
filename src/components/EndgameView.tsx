@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
 import { EndgamePuzzle, PieceTheme, BoardTheme } from '../types/chess';
@@ -28,6 +28,7 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
   const [activePuzzle, setActivePuzzle] = useState<EndgamePuzzle | null>(null);
 
   // Puzzle playing state
+  const sessionRef = useRef<number>(0);
   const [chess, setChess] = useState<Chess | null>(null);
   const [statusText, setStatusText] = useState<string>('');
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
@@ -40,6 +41,8 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
   );
 
   const startPuzzle = (puzzle: EndgamePuzzle) => {
+    sessionRef.current += 1;
+    setIsAiThinking(false);
     const newChess = new Chess(puzzle.fen);
     setActivePuzzle(puzzle);
     setChess(newChess);
@@ -97,27 +100,29 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
         return;
       }
 
-      // AI Response move
-      triggerAiDefense();
+      // AI Response move passing fresh board and session
+      triggerAiDefense(nextChess, sessionRef.current);
     } catch {
       // Invalid move
     }
   };
 
-  const triggerAiDefense = async () => {
-    if (!chess || !activePuzzle) return;
+  const triggerAiDefense = async (currentBoard: Chess, session: number = sessionRef.current) => {
+    if (!activePuzzle || sessionRef.current !== session) return;
     setIsAiThinking(true);
     setStatusText('상대 AI가 응수하는 중...');
 
     try {
-      const best = await stockfishService.getBestMove(chess.fen(), 9);
+      const best = await stockfishService.getBestMove(currentBoard.fen(), 9);
+      if (sessionRef.current !== session) return;
       if (best) {
-        const aiMove = chess.move({
+        const aiMove = currentBoard.move({
           from: best.from,
           to: best.to,
           promotion: best.promotion || 'q',
         });
         if (aiMove) {
+          if (sessionRef.current !== session) return;
           if (aiMove.captured) {
             soundManager.capture();
           } else {
@@ -125,7 +130,7 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
           }
 
           setLastMove({ from: best.from, to: best.to });
-          const nextChess = new Chess(chess.fen());
+          const nextChess = new Chess(currentBoard.fen());
           setChess(nextChess);
 
           if (nextChess.isCheck()) {
@@ -151,7 +156,9 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
     } catch (e) {
       console.error(e);
     } finally {
-      setIsAiThinking(false);
+      if (sessionRef.current === session) {
+        setIsAiThinking(false);
+      }
     }
   };
 
@@ -168,7 +175,11 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
         {/* Back and Header */}
         <div className="flex items-center justify-between">
           <button
-            onClick={() => setActivePuzzle(null)}
+            onClick={() => {
+              sessionRef.current += 1;
+              setIsAiThinking(false);
+              setActivePuzzle(null);
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold"
           >
             <ArrowLeft className="w-4 h-4" /> 목록으로

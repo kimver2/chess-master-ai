@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PieceTheme } from '../types/chess';
 
 interface PieceProps {
@@ -58,6 +58,10 @@ export const ChessPiece: React.FC<PieceProps> = ({
   theme = 'metal',
 }) => {
   const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [theme, type, color]);
 
   if (theme !== 'classic' && !imgError) {
     const fileName = `${color}${type}.png`;

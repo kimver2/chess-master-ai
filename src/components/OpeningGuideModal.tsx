@@ -171,8 +171,9 @@ export const OpeningGuideModal: React.FC<OpeningGuideModalProps> = ({
             </div>
           ) : (
             filteredOpenings.map((opening) => {
+              const openingKey = opening.eco + opening.nameEn;
               const isCurrent = currentOpening?.eco === opening.eco;
-              const isExpanded = expandedOpeningEco === opening.eco;
+              const isExpanded = expandedOpeningEco === openingKey;
               const hasExplanations =
                 opening.moveExplanationsKo && opening.moveExplanationsKo.length > 0;
               const hasGoals = opening.keyGoalsKo && opening.keyGoalsKo.length > 0;
@@ -289,7 +290,7 @@ export const OpeningGuideModal: React.FC<OpeningGuideModalProps> = ({
                         <button
                           type="button"
                           onClick={() =>
-                            setExpandedOpeningEco(isExpanded ? null : opening.eco)
+                            setExpandedOpeningEco(isExpanded ? null : openingKey)
                           }
                           className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1 font-medium transition-colors"
                         >
