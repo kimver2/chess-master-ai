@@ -1,0 +1,35 @@
+{
+  "name": "chess-master-ai",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "build:apk": "npm run build && npx cap sync android && cd android && ./gradlew assembleDebug && cp app/build/outputs/apk/debug/app-debug.apk ../chess-master-ai.apk",
+    "build:aab": "npm run build && npx cap sync android && cd android && ./gradlew bundleDebug && cp app/build/outputs/bundle/debug/app-debug.aab ../chess-master-ai.aab",
+    "open:android": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/app": "^7.1.2",
+    "chess.js": "^1.0.0-beta.9",
+    "lucide-react": "^1.16.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "stockfish.js": "^10.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.0.1",
+    "@capacitor/cli": "^7.0.1",
+    "@capacitor/core": "^7.0.1",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0"
+  }
+}
