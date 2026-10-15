@@ -240,7 +240,7 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
     const hintHighlights = getHintHighlights();
 
     return (
-      <div className="flex flex-col h-full justify-between p-3 space-y-2 overflow-hidden select-none">
+      <div className="flex flex-col min-h-full justify-between p-3 space-y-2 select-none">
         {/* Top Header */}
         <div className="flex items-center justify-between">
           <button
@@ -304,7 +304,7 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
         </div>
 
         {/* Chess Board Area */}
-        <div className="relative my-auto flex items-center justify-center">
+        <div className="relative my-auto flex items-center justify-center shrink-0">
           <ChessBoard
             chess={chess}
             orientation={activePuzzle.playerColor === 'w' ? 'white' : 'black'}

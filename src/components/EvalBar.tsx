@@ -54,7 +54,7 @@ export const EvalBar: React.FC<EvalBarProps> = ({
 
   return (
     <div
-      className="relative flex flex-col justify-end w-5 sm:w-6 h-full max-h-[min(50vh,420px)] rounded-lg overflow-hidden border border-zinc-700/80 bg-zinc-900 shadow-xl select-none shrink-0"
+      className="relative flex flex-col justify-end w-5 sm:w-6 h-full rounded-lg overflow-hidden border border-zinc-700/80 bg-zinc-900 shadow-xl select-none shrink-0"
       title={`형세 평가: ${scoreText} (${scoreText.startsWith('+') ? '백 유리' : scoreText.startsWith('-') ? '흑 유리' : '동등'})`}
     >
       {/* Black's portion (top) */}

@@ -367,7 +367,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       <div className="p-2 flex-1 flex flex-col items-center justify-center min-h-0 overflow-hidden">
         {/* Dynamic Board Color Legend */}
         {currentMove && hasBestMove && (
-          <div className="flex items-center justify-between px-2.5 py-1 bg-zinc-900/90 rounded-lg border border-zinc-800 text-[11px] mb-1.5 w-full max-w-[min(100%,50vh,420px)] shrink-0">
+          <div className="flex items-center justify-between px-2.5 py-1 bg-zinc-900/90 rounded-lg border border-zinc-800 text-[11px] mb-1.5 w-full max-w-[380px] shrink-0">
             <div className="flex items-center gap-2.5">
               <span className="flex items-center gap-1 font-bold text-emerald-400">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block shadow-xs shadow-emerald-500/60" />

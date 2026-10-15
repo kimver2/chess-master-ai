@@ -1159,11 +1159,11 @@ export const App: React.FC = () => {
       </header>
 
       {/* Main Tab Content */}
-      <main className="flex-1 flex flex-col justify-between overflow-hidden">
+      <main className="flex-1 flex flex-col overflow-y-auto">
         {activeTab === 'play' ? (
-          <div className="p-3 flex flex-col justify-between h-full space-y-1.5 overflow-hidden">
+          <div className="p-3 flex flex-col space-y-3 min-h-full">
             {/* Opponent (AI) Bar */}
-            <div data-tour="opponent-bar" className="w-full">
+            <div data-tour="opponent-bar" className="w-full shrink-0">
               <PlayerBar
                 name={`Stockfish AI (Lv.${difficulty})`}
                 isAi={true}
@@ -1178,7 +1178,7 @@ export const App: React.FC = () => {
             </div>
 
             {/* Real-time Opening Name Banner (Clickable) */}
-            <div data-tour="opening-banner" className="w-full">
+            <div data-tour="opening-banner" className="w-full shrink-0">
               <button
                 type="button"
                 onClick={() => setShowOpeningModal(true)}
@@ -1215,7 +1215,7 @@ export const App: React.FC = () => {
 
             {/* Active Guided Opening Banner */}
             {guidedOpening && currentGuidedMoveInfo && (
-              <div className="flex flex-col gap-1 px-3 py-1.5 rounded-xl bg-amber-950/80 border border-amber-500/60 text-amber-100 text-xs shadow-lg animate-fadeIn">
+              <div className="flex flex-col gap-1 px-3 py-1.5 rounded-xl bg-amber-950/80 border border-amber-500/60 text-amber-100 text-xs shadow-lg shrink-0 animate-fadeIn">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0 animate-pulse" />
@@ -1256,7 +1256,7 @@ export const App: React.FC = () => {
 
             {/* Guided Completion Toast */}
             {guidedCompletionMessage && (
-              <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-emerald-950/90 border border-emerald-500/60 text-emerald-200 text-xs shadow-md animate-fadeIn">
+              <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-emerald-950/90 border border-emerald-500/60 text-emerald-200 text-xs shadow-md shrink-0 animate-fadeIn">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <Trophy className="w-4 h-4 text-emerald-400 shrink-0" />
                   <span className="text-[11px] text-emerald-200 font-medium truncate">
@@ -1275,7 +1275,7 @@ export const App: React.FC = () => {
 
             {/* Active Stockfish Hint Banner */}
             {activeHint && (
-              <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-emerald-950/90 border border-emerald-500/50 text-emerald-200 text-xs shadow-md animate-fadeIn">
+              <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-emerald-950/90 border border-emerald-500/50 text-emerald-200 text-xs shadow-md shrink-0 animate-fadeIn">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <Lightbulb className="w-4 h-4 text-emerald-400 shrink-0 animate-pulse" />
                   <span className="font-extrabold text-white text-[11px] shrink-0">추천 최적수:</span>
@@ -1295,10 +1295,10 @@ export const App: React.FC = () => {
               </div>
             )}
 
-            {/* Chess Board View with Eval Bar */}
-            <div data-tour="chessboard" className="relative my-auto flex items-stretch justify-center gap-1.5 sm:gap-2 w-full max-h-[min(50vh,420px)]">
+            {/* Chess Board View with Eval Bar (크기 고정 및 축소 방지) */}
+            <div data-tour="chessboard" className="relative flex items-stretch justify-center gap-2 w-full shrink-0 my-2">
               {showEvalBar && (
-                <div className="self-stretch flex items-stretch py-0.5">
+                <div className="self-stretch flex items-stretch py-0.5 shrink-0">
                   <EvalBar
                     score={evalScore}
                     orientation={playerColor === 'b' ? 'black' : 'white'}
@@ -1307,7 +1307,7 @@ export const App: React.FC = () => {
                 </div>
               )}
 
-              <div className="relative flex-1 max-w-[min(100%,50vh,420px)] flex items-center justify-center">
+              <div className="relative w-full max-w-[380px] flex items-center justify-center shrink-0">
                 <ChessBoard
                   chess={displayChess}
                   orientation={playerColor === 'b' ? 'black' : 'white'}
@@ -1486,7 +1486,7 @@ export const App: React.FC = () => {
             </div>
 
             {/* Player Bar */}
-            <div data-tour="player-bar" className="w-full">
+            <div data-tour="player-bar" className="w-full shrink-0">
               <PlayerBar
                 name="나 (플레이어)"
                 isAi={false}
@@ -1501,7 +1501,7 @@ export const App: React.FC = () => {
             </div>
 
             {/* Action Bar (In-Game vs Post-Game Board Viewing) */}
-            <div data-tour="action-controls" className="w-full">
+            <div data-tour="action-controls" className="w-full shrink-0">
               {isGameOver && !showGameOverModal ? (
                 <div className="flex items-center gap-2 pt-0.5">
                   <button
@@ -1588,7 +1588,7 @@ export const App: React.FC = () => {
               <button
                 onClick={runGameReview}
                 disabled={isAnalyzing}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-99 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40"
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-99 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 shrink-0"
               >
                 <TrendingUp className="w-4 h-4" />
                 {isGameOver ? '대국 복기 및 좋은 수/실수 분석하기' : '현재까지의 대국 복기하기'}

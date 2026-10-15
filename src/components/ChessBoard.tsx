@@ -190,7 +190,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   return (
     <div
-      className="relative w-full aspect-square max-h-[min(50vh,420px)] max-w-[min(100%,50vh,420px)] mx-auto select-none rounded-xl overflow-hidden shadow-2xl border-2 border-zinc-800 bg-zinc-900"
+      className="relative w-full max-w-[380px] aspect-square mx-auto select-none rounded-xl overflow-hidden shadow-2xl border-2 border-zinc-800 bg-zinc-900 shrink-0"
       style={{
         backgroundImage: isTexturedBoard ? `url(/boards/${boardTheme}.png)` : undefined,
         backgroundSize: '100% 100%',
