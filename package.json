@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "build:apk": "npm run build && npx cap sync android && cd android && ./gradlew assembleDebug && cp app/build/outputs/apk/debug/app-debug.apk ../chess-master-ai.apk",
-    "build:aab": "npm run build && npx cap sync android && cd android && ./gradlew bundleDebug && cp app/build/outputs/bundle/debug/app-debug.aab ../chess-master-ai.aab",
+    "build:apk:release": "npm run build && npx cap sync android && cd android && ./gradlew assembleRelease && cp app/build/outputs/apk/release/app-release.apk ../chess-master-ai-release.apk",
+    "build:aab": "npm run build && npx cap sync android && cd android && ./gradlew bundleRelease && cp app/build/outputs/bundle/release/app-release.aab ../chess-master-ai.aab",
+    "build:aab:release": "npm run build && npx cap sync android && cd android && ./gradlew bundleRelease && cp app/build/outputs/bundle/release/app-release.aab ../chess-master-ai-release.aab && cp app/build/outputs/bundle/release/app-release.aab ../chess-master-ai.aab",
     "open:android": "npx cap open android"
   },
   "dependencies": {

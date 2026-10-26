@@ -47,3 +47,8 @@ android/.cxx/
 # Binary build outputs
 *.apk
 *.aab
+
+# Android Signing Credentials
+android/key.properties
+*.keystore
+*.jks
