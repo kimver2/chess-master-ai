@@ -1923,6 +1923,21 @@ export const App: React.FC = () => {
               </button>
             </div>
 
+            {/* Legal & Open Source Info */}
+            <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between text-[11px] text-zinc-400 px-1">
+              <a
+                href="/privacy.html"
+                target="_blank"
+                rel="noreferrer"
+                className="hover:text-amber-300 underline underline-offset-2 flex items-center gap-1 transition-colors"
+                title="개인정보처리방침 열기"
+              >
+                <span>개인정보처리방침</span>
+                <span className="text-[10px]">↗</span>
+              </a>
+              <span className="text-zinc-500 font-mono text-[10px]">Stockfish GPL v3</span>
+            </div>
+
             {/* Start Button */}
             <div className="pt-2 flex gap-2">
               <button
