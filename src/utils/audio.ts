@@ -94,6 +94,11 @@ class SoundManager {
     this.playSound('LowTime');
     this.vibrate(12);
   }
+
+  public gameStart() {
+    this.playSound('Move');
+    this.vibrate([20, 40, 20]);
+  }
 }
 
 export const soundManager = new SoundManager();

@@ -79,7 +79,7 @@ export function isFirebaseConfigured(): boolean {
 let appInstance: FirebaseApp | null = null;
 let dbInstance: Firestore | null = null;
 
-function getDb(): Firestore | null {
+export function getDb(): Firestore | null {
   if (dbInstance) return dbInstance;
   const config = getFirebaseConfig();
   if (!config) return null;

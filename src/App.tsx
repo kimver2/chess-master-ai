@@ -47,7 +47,9 @@ import {
   ChevronsRight,
   HelpCircle,
   X,
+  Users,
 } from 'lucide-react';
+import { MultiplayerView } from './components/MultiplayerView';
 import { ProfileModal } from './components/ProfileModal';
 import { RankingModal } from './components/RankingModal';
 import { AvatarIcon } from './components/AvatarIcon';
@@ -87,8 +89,8 @@ const checkThreefoldFromHistory = (moves: PlayedMoveRecord[]): boolean => {
 };
 
 export const App: React.FC = () => {
-  // Navigation: 'play' | 'puzzle' | 'endgame'
-  const [activeTab, setActiveTab] = useState<'play' | 'puzzle' | 'endgame'>('play');
+  // Navigation: 'play' | 'pvp' | 'puzzle' | 'endgame'
+  const [activeTab, setActiveTab] = useState<'play' | 'pvp' | 'puzzle' | 'endgame'>('play');
 
   // Player Stats
   const [stats, setStats] = useState(() => ({
@@ -1661,6 +1663,15 @@ export const App: React.FC = () => {
               </button>
             )}
           </div>
+        ) : activeTab === 'pvp' ? (
+          <div className="flex-1 flex flex-col overflow-y-auto">
+            <MultiplayerView
+              currentUser={userProfile}
+              pieceTheme={pieceTheme}
+              boardTheme={boardTheme}
+              onBackToPlay={() => setActiveTab('play')}
+            />
+          </div>
         ) : activeTab === 'puzzle' ? (
           <div className="flex-1 overflow-y-auto">
             <PuzzleView pieceTheme={pieceTheme} boardTheme={boardTheme} />
@@ -1675,7 +1686,7 @@ export const App: React.FC = () => {
       {/* Bottom Tab Bar */}
       <footer
         data-tour="bottom-tabs"
-        className="grid grid-cols-3 border-t border-zinc-800/80 bg-zinc-900/95 pt-1.5 px-2 sm:px-3 backdrop-blur-md shrink-0"
+        className="grid grid-cols-4 border-t border-zinc-800/80 bg-zinc-900/95 pt-1.5 px-1.5 sm:px-2 backdrop-blur-md shrink-0"
         style={{
           paddingBottom: 'clamp(6px, env(safe-area-inset-bottom, 6px), 16px)',
         }}
@@ -1688,6 +1699,16 @@ export const App: React.FC = () => {
         >
           <Swords className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" />
           <span className="text-[10px] sm:text-[11px]">체스 대국</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('pvp')}
+          className={`flex flex-col items-center py-1 transition-colors ${
+            activeTab === 'pvp' ? 'text-amber-400 font-bold' : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Users className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" />
+          <span className="text-[10px] sm:text-[11px]">1:1 대전</span>
         </button>
 
         <button
@@ -1707,7 +1728,7 @@ export const App: React.FC = () => {
           }`}
         >
           <Trophy className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" />
-          <span className="text-[10px] sm:text-[11px]">엔드게임 50</span>
+          <span className="text-[10px] sm:text-[11px]">엔드게임</span>
         </button>
       </footer>
 
