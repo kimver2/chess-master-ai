@@ -48,6 +48,12 @@ import {
   HelpCircle,
   X,
 } from 'lucide-react';
+import { ProfileModal } from './components/ProfileModal';
+import { RankingModal } from './components/RankingModal';
+import { AvatarIcon } from './components/AvatarIcon';
+import { UserProfile, getTier } from './types/profile';
+import { loadUserProfile, recordGameResult as recordProfileGameResult } from './services/storageService';
+import { submitOnlineScore } from './services/firebaseService';
 
 interface PlayedMoveRecord {
   ply: number;
@@ -267,6 +273,18 @@ export const App: React.FC = () => {
   // Interactive Onboarding Feature Tour Guide State
   const [showTourGuide, setShowTourGuide] = useState<boolean>(false);
 
+  // User Profile & Rankings State
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => loadUserProfile());
+  const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
+  const [showRankingModal, setShowRankingModal] = useState<boolean>(false);
+  const [lastGameReward, setLastGameReward] = useState<{
+    ratingDelta: number;
+    isFirstConquest: boolean;
+    isBestMoves: boolean;
+    isBestTime: boolean;
+  } | null>(null);
+  const gameStartTimeRef = React.useRef<number>(Date.now());
+
   // Auto-launch tour guide for first-time visitors
   useEffect(() => {
     try {
@@ -383,6 +401,34 @@ export const App: React.FC = () => {
   ]);
 
   const recordGameResult = (result: 'win' | 'loss' | 'draw') => {
+    const elapsedSec = Math.max(5, Math.round((Date.now() - gameStartTimeRef.current) / 1000));
+    const moveCount = playedMoves.length;
+
+    // Update profile in localStorage and get Elo delta & achievements
+    const outcome = recordProfileGameResult(result, difficulty, moveCount, elapsedSec);
+    setUserProfile(outcome.profile);
+    setLastGameReward({
+      ratingDelta: outcome.ratingDelta,
+      isFirstConquest: outcome.isFirstConquest,
+      isBestMoves: outcome.isBestMoves,
+      isBestTime: outcome.isBestTime,
+    });
+
+    // If victory, submit to Firebase online ranking if configured
+    if (result === 'win') {
+      submitOnlineScore({
+        userId: outcome.profile.id,
+        nickname: outcome.profile.nickname,
+        avatar: outcome.profile.avatar,
+        avatarColor: outcome.profile.avatarColor,
+        rating: outcome.profile.rating,
+        aiLevel: difficulty,
+        moves: moveCount,
+        timeSec: elapsedSec,
+        date: new Date().toISOString().substring(0, 10),
+      }).catch((err) => console.warn('Online score submission failed/skipped:', err));
+    }
+
     setStats((prev) => {
       const newGames = prev.gamesPlayed + 1;
       const newWins = result === 'win' ? prev.wins + 1 : prev.wins;
@@ -529,6 +575,8 @@ export const App: React.FC = () => {
     setShowGameOverModal(false);
     setGameResult('ongoing');
     setGameOverReason(null);
+    setLastGameReward(null);
+    gameStartTimeRef.current = Date.now();
     setReviewData(null);
     setActiveHint(null);
     setLastDetectedOpening(null);
@@ -574,6 +622,8 @@ export const App: React.FC = () => {
     setShowGameOverModal(false);
     setGameResult('ongoing');
     setGameOverReason(null);
+    setLastGameReward(null);
+    gameStartTimeRef.current = Date.now();
     setReviewData(null);
     setActiveHint(null);
     setLastDetectedOpening(opening);
@@ -1119,29 +1169,42 @@ export const App: React.FC = () => {
           paddingTop: 'calc(env(safe-area-inset-top, 0px) + 12px)',
         }}
       >
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm">
-            ♟
+        {/* Left: User Profile Quick Bar (Clickable) */}
+        <button
+          type="button"
+          onClick={() => setShowProfileModal(true)}
+          className="flex items-center gap-2 text-left hover:opacity-90 active:scale-98 transition-all group"
+          title="내 프로필 & 전적 확인"
+        >
+          <AvatarIcon avatar={userProfile.avatar} color={userProfile.avatarColor} size="sm" />
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-white group-hover:text-amber-300 transition-colors truncate max-w-[90px] xs:max-w-[130px]">
+                {userProfile.nickname}
+              </span>
+              <span className="text-[10px]">{getTier(userProfile.rating).icon}</span>
+            </div>
+            <div className="text-[10px] font-mono font-bold text-amber-400/90 leading-tight">
+              {userProfile.rating} <span className="text-[9px] text-zinc-500 font-normal">Elo</span>
+            </div>
           </div>
-          <h1 className="text-base font-extrabold tracking-tight bg-gradient-to-r from-amber-200 to-amber-400 bg-clip-text text-transparent">
-            체스 마스터
-          </h1>
-        </div>
+        </button>
 
-        {/* Top Actions: Tour Guide, Opening Guide & Settings */}
+        {/* Top Actions: Rankings, Opening Guide, Settings */}
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            onClick={() => setShowTourGuide(true)}
-            className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-zinc-300 hover:text-amber-300 transition-colors cursor-pointer"
-            title="앱 기능 둘러보기 가이드"
+            onClick={() => setShowRankingModal(true)}
+            className="p-1.5 sm:p-2 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-amber-300 transition-colors flex items-center gap-1 text-xs font-semibold cursor-pointer"
+            title="명예의 전당 & AI 랭킹 순위표"
           >
-            <HelpCircle className="w-4 h-4" />
+            <Trophy className="w-4 h-4 text-amber-400" />
+            <span className="hidden xs:inline">랭킹</span>
           </button>
           <button
             type="button"
             onClick={() => setShowOpeningModal(true)}
-            className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 transition-colors flex items-center gap-1 text-xs font-semibold cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 transition-colors flex items-center gap-1 text-xs font-semibold cursor-pointer"
             title="오프닝 가이드 및 백과사전"
           >
             <BookOpen className="w-4 h-4 text-amber-400" />
@@ -1150,7 +1213,7 @@ export const App: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowSettingsModal(true)}
-            className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
             title="게임 설정"
           >
             <Settings className="w-4 h-4" />
@@ -1672,6 +1735,63 @@ export const App: React.FC = () => {
               </p>
             </div>
 
+            {/* Player Rating & Achievement Card */}
+            {lastGameReward && (
+              <div className="p-3 rounded-xl bg-zinc-950/80 border border-zinc-800 space-y-2 text-left">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <AvatarIcon avatar={userProfile.avatar} color={userProfile.avatarColor} size="sm" />
+                    <div>
+                      <span className="font-bold text-white text-xs block">{userProfile.nickname}</span>
+                      <span className="text-[10px] text-zinc-400">{getTier(userProfile.rating).name}</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="flex items-center gap-1 font-mono font-bold text-xs">
+                      <span className="text-zinc-200">{userProfile.rating} Elo</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                          lastGameReward.ratingDelta >= 0
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : 'bg-rose-500/20 text-rose-400'
+                        }`}
+                      >
+                        {lastGameReward.ratingDelta >= 0
+                          ? `+${lastGameReward.ratingDelta}`
+                          : lastGameReward.ratingDelta}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {lastGameReward.isFirstConquest && (
+                  <div className="p-2 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-1.5">
+                    <span>🏆</span>
+                    <span>AI Lv.{difficulty} 최초 격파! 명예 훈장 획득!</span>
+                  </div>
+                )}
+
+                {lastGameReward.isBestMoves && !lastGameReward.isFirstConquest && (
+                  <div className="p-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold flex items-center gap-1">
+                    <span>⚡</span>
+                    <span>새로운 최소 수 승리 기록 ({playedMoves.length}수)!</span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowGameOverModal(false);
+                    setShowRankingModal(true);
+                  }}
+                  className="w-full py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-amber-400 text-xs font-bold flex items-center justify-center gap-1 transition-colors"
+                >
+                  <Trophy className="w-3.5 h-3.5" />
+                  <span>명예의 전당 순위표 확인</span>
+                </button>
+              </div>
+            )}
+
             <div className="space-y-2 pt-2">
               <button
                 type="button"
@@ -2037,6 +2157,26 @@ export const App: React.FC = () => {
       <FeatureTourGuide
         isOpen={showTourGuide}
         onClose={() => setShowTourGuide(false)}
+      />
+
+      {/* User Profile Modal */}
+      <ProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        profile={userProfile}
+        onUpdateProfile={setUserProfile}
+        onSelectLevelToPlay={(lvl) => {
+          setDifficulty(lvl as DifficultyLevel);
+          startNewGame(lvl as DifficultyLevel);
+        }}
+        onOpenRanking={() => setShowRankingModal(true)}
+      />
+
+      {/* Rankings / Leaderboard Modal */}
+      <RankingModal
+        isOpen={showRankingModal}
+        onClose={() => setShowRankingModal(false)}
+        currentUser={userProfile}
       />
     </div>
   );
