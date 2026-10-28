@@ -21,6 +21,8 @@ import {
   PieceColor,
   PieceTheme,
   BoardTheme,
+  PlayedMoveRecord,
+  ArchivedGame,
 } from './types/chess';
 import { soundManager } from './utils/audio';
 import {
@@ -48,29 +50,27 @@ import {
   HelpCircle,
   X,
   Users,
+  FileText,
 } from 'lucide-react';
 import { MultiplayerView } from './components/MultiplayerView';
 import { ProfileModal } from './components/ProfileModal';
 import { RankingModal } from './components/RankingModal';
+import { GameArchiveModal } from './components/GameArchiveModal';
 import { AvatarIcon } from './components/AvatarIcon';
 import { UserProfile, getTier } from './types/profile';
-import { loadUserProfile, recordGameResult as recordProfileGameResult } from './services/storageService';
+import {
+  loadUserProfile,
+  recordGameResult as recordProfileGameResult,
+  saveActiveGame,
+  loadActiveGame,
+  clearActiveGame,
+  loadGameArchive,
+  saveGameToArchive,
+  deleteArchivedGame,
+  buildStandardPgn,
+  AI_NAMES,
+} from './services/storageService';
 import { submitOnlineScore } from './services/firebaseService';
-
-interface PlayedMoveRecord {
-  ply: number;
-  moveNumber: number;
-  color: PieceColor;
-  san: string;
-  from: string;
-  to: string;
-  promotion?: string;
-  captured?: string;
-  fenBefore: string;
-  fenAfter: string;
-  hintFollowed?: boolean;
-  hintBestSan?: string;
-}
 
 const getPositionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
 
@@ -275,10 +275,18 @@ export const App: React.FC = () => {
   // Interactive Onboarding Feature Tour Guide State
   const [showTourGuide, setShowTourGuide] = useState<boolean>(false);
 
-  // User Profile & Rankings State
+  // User Profile, Rankings & Archive State
   const [userProfile, setUserProfile] = useState<UserProfile>(() => loadUserProfile());
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
   const [showRankingModal, setShowRankingModal] = useState<boolean>(false);
+  const [showArchiveModal, setShowArchiveModal] = useState<boolean>(false);
+  const [gameArchives, setGameArchives] = useState<ArchivedGame[]>(() => loadGameArchive());
+  const [reviewPlayerColor, setReviewPlayerColor] = useState<PieceColor>('w');
+  const [resumedBannerMessage, setResumedBannerMessage] = useState<string | null>(null);
+  const [pendingConfirmAction, setPendingConfirmAction] = useState<{
+    type: 'resign' | 'new_game';
+    nextSettings?: { diff: DifficultyLevel; time: TimeLimit; side: PlayerSide };
+  } | null>(null);
   const [lastGameReward, setLastGameReward] = useState<{
     ratingDelta: number;
     isFirstConquest: boolean;
@@ -303,10 +311,93 @@ export const App: React.FC = () => {
   // App Exit Confirmation State (on Android Back Button)
   const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
 
-  // Init Stockfish engine on launch
+  // Init Stockfish engine & auto-resume ongoing game on launch
   useEffect(() => {
     stockfishService.init().catch(console.error);
+
+    const saved = loadActiveGame();
+    if (saved && saved.playedMoves.length > 0) {
+      const restoredChess = new Chess();
+      try {
+        for (const m of saved.playedMoves) {
+          restoredChess.move({ from: m.from, to: m.to, promotion: m.promotion || 'q' });
+        }
+      } catch {
+        try {
+          restoredChess.load(saved.fen);
+        } catch {}
+      }
+
+      if (!restoredChess.isGameOver()) {
+        const session = ++gameSessionRef.current;
+        setDifficulty(saved.difficulty);
+        setTimeLimit(saved.timeLimit);
+        setChosenSide(saved.chosenSide);
+        setPlayerColor(saved.playerColor);
+        setChess(restoredChess);
+        setPlayedMoves(saved.playedMoves);
+        setLastMove(saved.lastMove);
+        setWhiteTimeMs(saved.whiteTimeMs);
+        setBlackTimeMs(saved.blackTimeMs);
+        gameStartTimeRef.current = saved.startedAt || Date.now();
+        setResumedBannerMessage(
+          `🔄 진행 중이던 이전 대국(${saved.playedMoves.length}수)을 자동으로 복구했습니다.`
+        );
+        const toastTimer = setTimeout(() => setResumedBannerMessage(null), 5000);
+
+        if (restoredChess.turn() !== saved.playerColor) {
+          setTimeout(() => {
+            if (gameSessionRef.current === session) {
+              triggerAiMove(
+                restoredChess,
+                saved.difficulty,
+                saved.playedMoves,
+                saved.playerColor,
+                session
+              );
+            }
+          }, 600);
+        }
+        return () => clearTimeout(toastTimer);
+      } else {
+        clearActiveGame();
+      }
+    }
   }, []);
+
+  // Auto-save active ongoing game to localStorage
+  useEffect(() => {
+    if (isGameOver) {
+      clearActiveGame();
+      return;
+    }
+    if (playedMoves.length === 0) return;
+
+    saveActiveGame({
+      fen: chess.fen(),
+      playedMoves,
+      difficulty,
+      timeLimit,
+      chosenSide,
+      playerColor,
+      whiteTimeMs,
+      blackTimeMs,
+      lastMove,
+      startedAt: gameStartTimeRef.current,
+      savedAt: Date.now(),
+    });
+  }, [
+    chess,
+    playedMoves,
+    difficulty,
+    timeLimit,
+    chosenSide,
+    playerColor,
+    whiteTimeMs,
+    blackTimeMs,
+    lastMove,
+    isGameOver,
+  ]);
 
   // Hardware Back Button Handler for Android
   useEffect(() => {
@@ -314,8 +405,16 @@ export const App: React.FC = () => {
     const setupBackHandler = async () => {
       try {
         listenerHandle = await CapApp.addListener('backButton', () => {
+          if (pendingConfirmAction) {
+            setPendingConfirmAction(null);
+            return;
+          }
           if (showTourGuide) {
             setShowTourGuide(false);
+            return;
+          }
+          if (showArchiveModal) {
+            setShowArchiveModal(false);
             return;
           }
           if (showOpeningModal) {
@@ -360,7 +459,9 @@ export const App: React.FC = () => {
       }
     };
   }, [
+    pendingConfirmAction,
     showTourGuide,
+    showArchiveModal,
     showOpeningModal,
     showExitConfirm,
     showGameOverModal,
@@ -402,9 +503,15 @@ export const App: React.FC = () => {
     viewPlyIndex,
   ]);
 
-  const recordGameResult = (result: 'win' | 'loss' | 'draw') => {
+  const recordGameResult = (
+    result: 'win' | 'loss' | 'draw',
+    finalMoves: PlayedMoveRecord[] = playedMoves,
+    reason: GameOverReason = gameOverReason,
+    finalFen: string = chess.fen()
+  ) => {
+    clearActiveGame();
     const elapsedSec = Math.max(5, Math.round((Date.now() - gameStartTimeRef.current) / 1000));
-    const moveCount = playedMoves.length;
+    const moveCount = finalMoves.length;
 
     // Update profile in localStorage and get Elo delta & achievements
     const outcome = recordProfileGameResult(result, difficulty, moveCount, elapsedSec);
@@ -416,8 +523,45 @@ export const App: React.FC = () => {
       isBestTime: outcome.isBestTime,
     });
 
+    // Save completed AI game to local archive if at least 1 move was played
+    if (finalMoves.length > 0) {
+      const winnerSide: '1-0' | '0-1' | '1/2-1/2' =
+        result === 'draw'
+          ? '1/2-1/2'
+          : (result === 'win' && playerColor === 'w') ||
+            (result === 'loss' && playerColor === 'b')
+          ? '1-0'
+          : '0-1';
+
+      const aiDisplayName = AI_NAMES[difficulty] || `Stockfish AI (Lv.${difficulty})`;
+      const pgn = buildStandardPgn(finalMoves, {
+        event: `Chess Master AI vs ${aiDisplayName}`,
+        white: playerColor === 'w' ? outcome.profile.nickname : aiDisplayName,
+        black: playerColor === 'b' ? outcome.profile.nickname : aiDisplayName,
+        result: winnerSide,
+      });
+      const detectedOp = getOpeningFromMoves(finalMoves.map((m) => m.san));
+
+      saveGameToArchive({
+        date: new Date().toISOString(),
+        mode: 'ai',
+        opponentName: aiDisplayName,
+        aiLevel: difficulty,
+        playerColor,
+        result,
+        reason,
+        moveCount,
+        durationSec: elapsedSec,
+        pgn,
+        finalFen,
+        openingName: detectedOp?.nameKo || lastDetectedOpening?.nameKo,
+        moves: finalMoves,
+      });
+      setGameArchives(loadGameArchive());
+    }
+
     // If victory, submit to Firebase online ranking if configured
-    if (result === 'win') {
+    if (result === 'win' && moveCount > 0) {
       submitOnlineScore({
         userId: outcome.profile.id,
         nickname: outcome.profile.nickname,
@@ -495,7 +639,7 @@ export const App: React.FC = () => {
     setGameOverReason('timeout');
     const outcome = loserColor === playerColor ? 'loss' : 'win';
     setGameResult(outcome);
-    recordGameResult(outcome);
+    recordGameResult(outcome, playedMoves, 'timeout', chess.fen());
     if (outcome === 'win') {
       soundManager.victory();
     } else {
@@ -566,6 +710,9 @@ export const App: React.FC = () => {
     newTime = timeLimit,
     newSide = chosenSide
   ) => {
+    clearActiveGame();
+    setResumedBannerMessage(null);
+    setPendingConfirmAction(null);
     const session = ++gameSessionRef.current;
     const newChess = new Chess();
     setChess(newChess);
@@ -610,8 +757,26 @@ export const App: React.FC = () => {
     }
   };
 
+  // Request New Game with confirmation if an active game has moves
+  const requestNewGame = (
+    newDifficulty = difficulty,
+    newTime = timeLimit,
+    newSide = chosenSide
+  ) => {
+    if (!isGameOver && playedMoves.length > 0) {
+      setPendingConfirmAction({
+        type: 'new_game',
+        nextSettings: { diff: newDifficulty, time: newTime, side: newSide },
+      });
+      return;
+    }
+    startNewGame(newDifficulty, newTime, newSide);
+  };
+
   // Start Guided Opening Game
   const handleStartGuidedOpening = (opening: ChessOpening) => {
+    clearActiveGame();
+    setResumedBannerMessage(null);
     const session = ++gameSessionRef.current;
     const side: PieceColor = opening.recommendedSide || 'w';
     const newChess = new Chess();
@@ -945,7 +1110,7 @@ export const App: React.FC = () => {
       setGameOverReason('checkmate');
       const outcome = game.turn() === humanColor ? 'loss' : 'win';
       setGameResult(outcome);
-      recordGameResult(outcome);
+      recordGameResult(outcome, history, 'checkmate', game.fen());
       setEvalScore(game.turn() === 'w' ? -10000 : 10000);
       if (outcome === 'win') {
         soundManager.victory();
@@ -961,17 +1126,16 @@ export const App: React.FC = () => {
 
     const isRepetition = game.isThreefoldRepetition() || isThreefoldRepetitionInHistory(history, game.fen());
     if (game.isDraw() || game.isStalemate() || isRepetition || game.isInsufficientMaterial()) {
+      const drawReason: GameOverReason = game.isStalemate()
+        ? 'stalemate'
+        : isRepetition
+        ? 'threefold_repetition'
+        : 'insufficient_material';
       setIsGameOver(true);
       setActiveHint(null);
-      setGameOverReason(
-        game.isStalemate()
-          ? 'stalemate'
-          : isRepetition
-          ? 'threefold_repetition'
-          : 'insufficient_material'
-      );
+      setGameOverReason(drawReason);
       setGameResult('draw');
-      recordGameResult('draw');
+      recordGameResult('draw', history, drawReason, game.fen());
       setEvalScore(0);
       soundManager.draw();
       setTimeout(() => {
@@ -1007,30 +1171,43 @@ export const App: React.FC = () => {
     }
   };
 
-  // Resign
+  // Request Resign with confirmation modal
+  const requestResign = () => {
+    if (isGameOver) return;
+    setPendingConfirmAction({ type: 'resign' });
+  };
+
+  // Execute Confirmed Resign
   const handleResign = () => {
     if (isGameOver) return;
+    setPendingConfirmAction(null);
     gameSessionRef.current += 1;
     setIsAiThinking(false);
     setIsGameOver(true);
     setActiveHint(null);
     setGameOverReason('resignation');
     setGameResult('loss');
-    recordGameResult('loss');
+    recordGameResult('loss', playedMoves, 'resignation', chess.fen());
     soundManager.defeat();
     setTimeout(() => {
       setShowGameOverModal(true);
     }, 600);
   };
 
-  // Run Game Review
-  const runGameReview = async () => {
-    if (playedMoves.length === 0) return;
+  // Run Game Review for any move list (current AI match, archived match, or PVP match)
+  const runMovesReview = async (
+    movesToAnalyze: PlayedMoveRecord[],
+    targetPlayerColor: PieceColor = playerColor
+  ) => {
+    if (movesToAnalyze.length === 0) return;
+    setShowArchiveModal(false);
+    setShowGameOverModal(false);
+    setReviewPlayerColor(targetPlayerColor);
     setIsAnalyzing(true);
-    setAnalysisProgress({ current: 0, total: playedMoves.length });
+    setAnalysisProgress({ current: 0, total: movesToAnalyze.length });
 
     try {
-      const result = await stockfishService.analyzeGame(playedMoves, (curr, total) => {
+      const result = await stockfishService.analyzeGame(movesToAnalyze, (curr, total) => {
         setAnalysisProgress({ current: curr, total });
       });
       setReviewData(result);
@@ -1041,6 +1218,10 @@ export const App: React.FC = () => {
       setIsAnalyzing(false);
       setAnalysisProgress(null);
     }
+  };
+
+  const runGameReview = async () => {
+    await runMovesReview(playedMoves, playerColor);
   };
 
   // Material & captured pieces calculation (accurately tracks captures and promotions)
@@ -1202,7 +1383,7 @@ export const App: React.FC = () => {
           </div>
         </button>
 
-        {/* Top Actions: Rankings, Opening Guide, Settings */}
+        {/* Top Actions: Rankings, Archive, Opening Guide, Settings */}
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -1213,6 +1394,19 @@ export const App: React.FC = () => {
           >
             <Trophy className="w-4 h-4 text-amber-400" />
             <span className="hidden xs:inline">랭킹</span>
+          </button>
+          <button
+            type="button"
+            data-testid="open-archive-btn"
+            onClick={() => {
+              setGameArchives(loadGameArchive());
+              setShowArchiveModal(true);
+            }}
+            className="p-1.5 sm:p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-emerald-300 transition-colors flex items-center gap-1 text-xs font-semibold cursor-pointer"
+            title="내 기보 보관함 & PGN 공유"
+          >
+            <FileText className="w-4 h-4 text-emerald-400" />
+            <span className="hidden sm:inline">기보</span>
           </button>
           <button
             type="button"
@@ -1327,6 +1521,23 @@ export const App: React.FC = () => {
                     </span>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* Auto-Resumed Game Toast Banner */}
+            {resumedBannerMessage && (
+              <div
+                data-testid="resumed-game-banner"
+                className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-sky-950/90 border border-sky-500/50 text-sky-200 text-xs shadow-md shrink-0 animate-fadeIn"
+              >
+                <span className="text-[11px] font-semibold truncate">{resumedBannerMessage}</span>
+                <button
+                  type="button"
+                  onClick={() => setResumedBannerMessage(null)}
+                  className="text-sky-400 hover:text-white p-1 rounded-md"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
             )}
 
@@ -1638,7 +1849,8 @@ export const App: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={handleResign}
+                    data-testid="ai-resign-btn"
+                    onClick={requestResign}
                     disabled={isGameOver}
                     className="py-1.5 sm:py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-zinc-300 text-[11px] font-semibold flex items-center justify-center gap-1 border border-zinc-800"
                     title="기권하기"
@@ -1649,7 +1861,8 @@ export const App: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={() => startNewGame()}
+                    data-testid="ai-new-game-btn"
+                    onClick={() => requestNewGame()}
                     className="py-1.5 sm:py-2 px-1 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-98 text-zinc-950 text-[11px] font-black flex items-center justify-center gap-1 shadow-sm"
                     title="새 게임 시작"
                   >
@@ -1679,6 +1892,9 @@ export const App: React.FC = () => {
               pieceTheme={pieceTheme}
               boardTheme={boardTheme}
               onBackToPlay={() => setActiveTab('play')}
+              onProfileUpdated={setUserProfile}
+              onArchiveSaved={() => setGameArchives(loadGameArchive())}
+              onAnalyzeMoves={(moves, myColor) => runMovesReview(moves, myColor)}
             />
           </div>
         ) : activeTab === 'puzzle' ? (
@@ -2102,7 +2318,10 @@ export const App: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => startNewGame(difficulty, timeLimit, chosenSide)}
+                onClick={() => {
+                  setShowSettingsModal(false);
+                  requestNewGame(difficulty, timeLimit, chosenSide);
+                }}
                 className="flex-1 py-2.5 rounded-xl bg-amber-500 text-zinc-950 text-xs font-bold shadow-md shadow-amber-950/30"
               >
                 설정 적용 후 새 게임
@@ -2114,7 +2333,7 @@ export const App: React.FC = () => {
 
       {/* Analysis Loading Overlay */}
       {isAnalyzing && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl max-w-xs w-full text-center space-y-3 shadow-2xl">
             <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mx-auto" />
             <h4 className="text-sm font-bold text-zinc-100">대국 수읽기 정밀 분석 중...</h4>
@@ -2134,11 +2353,76 @@ export const App: React.FC = () => {
       {showReviewModal && reviewData && (
         <ReviewModal
           reviewData={reviewData}
-          playerColor={playerColor}
+          playerColor={reviewPlayerColor}
           pieceTheme={pieceTheme}
           boardTheme={boardTheme}
           onClose={() => setShowReviewModal(false)}
         />
+      )}
+
+      {/* Resign / New Game Safety Confirmation Modal */}
+      {pendingConfirmAction && (
+        <div
+          data-testid="confirm-action-modal"
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl max-w-xs w-full text-center space-y-4 shadow-2xl">
+            <div
+              className={`w-12 h-12 rounded-full mx-auto flex items-center justify-center text-2xl border ${
+                pendingConfirmAction.type === 'resign'
+                  ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                  : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+              }`}
+            >
+              {pendingConfirmAction.type === 'resign' ? '🏳️' : '♟️'}
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-zinc-100">
+                {pendingConfirmAction.type === 'resign'
+                  ? '정말 기권하시겠습니까?'
+                  : '진행 중인 대국이 있습니다'}
+              </h3>
+              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                {pendingConfirmAction.type === 'resign'
+                  ? '기권 시 현재 대국이 패배로 기록되며 Elo 레이팅이 차감됩니다.'
+                  : '현재 진행 중인 대국을 종료하고 새로운 게임을 시작하시겠습니까?'}
+              </p>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                data-testid="cancel-action-btn"
+                onClick={() => setPendingConfirmAction(null)}
+                className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition-all"
+              >
+                계속 대국하기
+              </button>
+              <button
+                type="button"
+                data-testid="confirm-action-btn"
+                onClick={() => {
+                  if (pendingConfirmAction.type === 'resign') {
+                    handleResign();
+                  } else {
+                    const next = pendingConfirmAction.nextSettings;
+                    startNewGame(
+                      next?.diff ?? difficulty,
+                      next?.time ?? timeLimit,
+                      next?.side ?? chosenSide
+                    );
+                  }
+                }}
+                className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${
+                  pendingConfirmAction.type === 'resign'
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-950/40'
+                    : 'bg-amber-500 hover:bg-amber-400 text-zinc-950 shadow-md shadow-amber-950/30'
+                }`}
+              >
+                {pendingConfirmAction.type === 'resign' ? '기권하기' : '새 게임 시작'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Opening Guide Modal */}
@@ -2199,9 +2483,22 @@ export const App: React.FC = () => {
         onUpdateProfile={setUserProfile}
         onSelectLevelToPlay={(lvl) => {
           setDifficulty(lvl as DifficultyLevel);
-          startNewGame(lvl as DifficultyLevel);
+          requestNewGame(lvl as DifficultyLevel);
         }}
         onOpenRanking={() => setShowRankingModal(true)}
+        onOpenArchive={() => {
+          setGameArchives(loadGameArchive());
+          setShowArchiveModal(true);
+        }}
+      />
+
+      {/* Game Archive Modal */}
+      <GameArchiveModal
+        isOpen={showArchiveModal}
+        onClose={() => setShowArchiveModal(false)}
+        archives={gameArchives}
+        onAnalyzeGame={(archived) => runMovesReview(archived.moves, archived.playerColor)}
+        onDeleteGame={(id) => setGameArchives(deleteArchivedGame(id))}
       />
 
       {/* Rankings / Leaderboard Modal */}

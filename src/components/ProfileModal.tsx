@@ -10,9 +10,10 @@ import {
   Check,
   TrendingUp,
   Sparkles,
+  FileText,
 } from 'lucide-react';
 import { UserProfile, AvatarType, AvatarColor, getTier, TIERS } from '../types/profile';
-import { saveUserProfile, AI_NAMES, AI_RATINGS } from '../services/storageService';
+import { saveUserProfile, AI_NAMES, AI_RATINGS, ALL_AI_LEVELS } from '../services/storageService';
 import { AvatarIcon } from './AvatarIcon';
 
 interface ProfileModalProps {
@@ -22,6 +23,7 @@ interface ProfileModalProps {
   onUpdateProfile: (updated: UserProfile) => void;
   onSelectLevelToPlay?: (level: number) => void;
   onOpenRanking?: () => void;
+  onOpenArchive?: () => void;
 }
 
 const AVATAR_OPTIONS: Array<{ type: AvatarType; label: string }> = [
@@ -49,6 +51,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   onUpdateProfile,
   onSelectLevelToPlay,
   onOpenRanking,
+  onOpenArchive,
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nicknameInput, setNicknameInput] = useState(profile.nickname);
@@ -104,7 +107,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     saveUserProfile(updated);
   };
 
-  const conqueredCount = Object.values(profile.levelRecords).filter((r) => r.conquered).length;
+  const conqueredCount = ALL_AI_LEVELS.filter((lvl) => profile.levelRecords[lvl]?.conquered).length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-xs animate-in fade-in duration-200">
@@ -290,20 +293,38 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </div>
           </div>
 
-          {/* AI Level Conquest Section (Lv.1 to Lv.8) */}
+          {/* Archive Quick Button */}
+          {onOpenArchive && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenArchive();
+              }}
+              className="w-full py-2.5 px-3.5 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-750 text-zinc-200 text-xs font-bold flex items-center justify-between transition-all active:scale-98"
+            >
+              <span className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-emerald-400" />
+                <span>내 대국 기보 보관함 & PGN 공유</span>
+              </span>
+              <span className="text-[11px] text-emerald-400 font-bold">열기 →</span>
+            </button>
+          )}
+
+          {/* AI Level Conquest Section (Lv.1 to Lv.10) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <Award className="w-4 h-4 text-amber-400" />
                 <h4 className="text-xs font-bold text-zinc-200">
-                  AI 난이도별 정복 훈장 ({conqueredCount}/8)
+                  AI 난이도별 정복 훈장 ({conqueredCount}/10)
                 </h4>
               </div>
               <span className="text-[11px] text-zinc-400">최단 수 / 최단 시간 기록</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {[1, 2, 3, 4, 5, 6, 7, 8].map((lvl) => {
+              {ALL_AI_LEVELS.map((lvl) => {
                 const rec = profile.levelRecords[lvl] || {
                   conquered: false,
                   wins: 0,

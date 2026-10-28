@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { ChessBoard, BoardArrow, SquareBadge } from './ChessBoard';
 import { GameReviewData, MoveAnalysis, PieceTheme, BoardTheme } from '../types/chess';
+import { soundManager } from '../utils/audio';
 import {
   ChevronLeft,
   ChevronRight,
@@ -15,6 +16,8 @@ import {
   Lightbulb,
   X,
   TrendingUp,
+  RotateCcw,
+  Target,
 } from 'lucide-react';
 
 interface ReviewModalProps {
@@ -40,7 +43,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   };
 
   // Filter: default to true (see ONLY player moves, not opponent moves)
-  const [filterPlayerOnly, setFilterPlayerOnly] = useState<boolean>(true);
+  const [filterPlayerOnly, setFilterPlayerOnly] = useState<boolean>(() => {
+    const hasPlayerMoves = reviewData.moves.some((m) => m.color === playerColor);
+    return hasPlayerMoves;
+  });
 
   const displayedMoves = filterPlayerOnly
     ? reviewData.moves.filter((m) => m.color === playerColor)
@@ -49,7 +55,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   // Start with the first mistake/blunder by player if exists, otherwise first move
   const [selectedIdx, setSelectedIdx] = useState<number>(() => {
     const playerMoves = reviewData.moves.filter((m) => m.color === playerColor);
-    const firstBad = playerMoves.findIndex((m) => isBadMove(m));
+    const list = playerMoves.length > 0 ? playerMoves : reviewData.moves;
+    const firstBad = list.findIndex((m) => isBadMove(m));
     return firstBad !== -1 ? firstBad : 0;
   });
 
@@ -59,15 +66,100 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
   const [showBestMove, setShowBestMove] = useState<boolean>(() => {
     const playerMoves = reviewData.moves.filter((m) => m.color === playerColor);
-    const firstBad = playerMoves.findIndex((m) => isBadMove(m));
-    const initialMove = playerMoves[firstBad !== -1 ? firstBad : 0];
+    const list = playerMoves.length > 0 ? playerMoves : reviewData.moves;
+    const firstBad = list.findIndex((m) => isBadMove(m));
+    const initialMove = list[firstBad !== -1 ? firstBad : 0];
     return isBadMove(initialMove);
   });
 
+  // Interactive "Retry Mistake" state
+  const [isRetryMode, setIsRetryMode] = useState<boolean>(false);
+  const [retryChess, setRetryChess] = useState<Chess | null>(null);
+  const [retryLastMove, setRetryLastMove] = useState<{ from: string; to: string } | null>(null);
+  const [retrySolved, setRetrySolved] = useState<boolean>(false);
+  const [retryShowHint, setRetryShowHint] = useState<boolean>(false);
+  const [retryFeedback, setRetryFeedback] = useState<{
+    type: 'info' | 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetRetryMode = () => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    setIsRetryMode(false);
+    setRetryChess(null);
+    setRetryLastMove(null);
+    setRetrySolved(false);
+    setRetryShowHint(false);
+    setRetryFeedback(null);
+  };
+
+  const startRetryForCurrentMove = () => {
+    if (!currentMove) return;
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    const c = new Chess(currentMove.fenBefore);
+    setIsRetryMode(true);
+    setRetryChess(c);
+    setRetryLastMove(null);
+    setRetrySolved(false);
+    setRetryShowHint(false);
+    setRetryFeedback({
+      type: 'info',
+      message: `${currentMove.san} 대신 스톡피쉬가 추천하는 최선의 수를 직접 찾아 두어보세요!`,
+    });
+  };
+
+  const handleRetryBoardMove = (from: string, to: string, promotion = 'q') => {
+    if (!isRetryMode || !retryChess || !currentMove || retrySolved) return;
+    try {
+      const next = new Chess(retryChess.fen());
+      const move = next.move({ from, to, promotion });
+      if (!move) return;
+
+      setRetryChess(next);
+      setRetryLastMove({ from, to });
+
+      const expectedUci = currentMove.bestMoveUci?.toLowerCase();
+      const playedUci = `${from}${to}${move.promotion || ''}`.toLowerCase();
+      const playedBaseUci = `${from}${to}`.toLowerCase();
+
+      const isCorrect =
+        move.san === currentMove.bestMoveSan ||
+        (expectedUci && (playedUci === expectedUci || playedBaseUci === expectedUci.substring(0, 4))) ||
+        next.isCheckmate();
+
+      if (isCorrect) {
+        soundManager.victory();
+        setRetrySolved(true);
+        setRetryFeedback({
+          type: 'success',
+          message: `🎉 정답입니다! 최선의 수 ${move.san}을(를) 정확히 찾아내셨습니다!`,
+        });
+      } else {
+        soundManager.defeat();
+        setRetryFeedback({
+          type: 'error',
+          message: `❌ 아쉽습니다 (${move.san}). 실수했던 수를 피해 더 강력한 수를 찾아보세요!`,
+        });
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = setTimeout(() => {
+          setRetryChess(new Chess(currentMove.fenBefore));
+          setRetryLastMove(null);
+        }, 900);
+      }
+    } catch {
+      // invalid move
+    }
+  };
+
   // Navigate to index with automatic "Show Best Move First" for mistakes/blunders/inaccuracies
-  const handleSelectIndex = (idx: number) => {
+  const handleSelectIndex = (idx: number, customList = displayedMoves) => {
+    resetRetryMode();
     setSelectedIdx(idx);
-    const targetMove = displayedMoves[idx];
+    const targetMove = customList[idx];
     if (isBadMove(targetMove)) {
       setShowBestMove(true);
     } else {
@@ -75,7 +167,23 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     }
   };
 
+  // Jump from Eval Graph click (given 0-based index into reviewData.moves)
+  const handleGraphSelectAllIdx = (allMoveIdx: number) => {
+    const targetMove = reviewData.moves[allMoveIdx];
+    if (!targetMove) return;
+
+    const idxInDisplayed = displayedMoves.indexOf(targetMove);
+    if (idxInDisplayed !== -1) {
+      handleSelectIndex(idxInDisplayed, displayedMoves);
+    } else {
+      // Switch to '전체 수' so the clicked opponent move can be inspected immediately
+      setFilterPlayerOnly(false);
+      handleSelectIndex(allMoveIdx, reviewData.moves);
+    }
+  };
+
   const handleToggleFilter = (playerOnly: boolean) => {
+    resetRetryMode();
     const activeMove = displayedMoves[safeIdx];
     setFilterPlayerOnly(playerOnly);
     const nextList = playerOnly
@@ -92,9 +200,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     }
   };
 
-  // Reconstruct board at currentPly
+  // Reconstruct board at currentPly (or use retryChess when retrying mistake)
   const currentChess = new Chess();
-  if (currentMove) {
+  if (isRetryMode && retryChess) {
+    currentChess.load(retryChess.fen());
+  } else if (currentMove) {
     if (showBestMove && currentMove.bestMoveUci) {
       currentChess.load(currentMove.fenBefore);
       const from = currentMove.bestMoveUci.substring(0, 2);
@@ -120,10 +230,17 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const highlights: { [square: string]: string } = {};
   const squareBadges: { [square: string]: SquareBadge } = {};
   const arrows: BoardArrow[] = [];
-  let myArrowColor = '#38bdf8'; // sky default
+  let myArrowColor = '#38bdf8';
 
-  if (currentMove) {
-    // Determine player's move colors based on quality
+  if (isRetryMode && currentMove) {
+    if (retryShowHint && currentMove.bestMoveUci) {
+      const bestFrom = currentMove.bestMoveUci.substring(0, 2);
+      const bestTo = currentMove.bestMoveUci.substring(2, 4);
+      highlights[bestFrom] = 'bg-emerald-500/40 ring-2 ring-inset ring-emerald-400';
+      highlights[bestTo] = 'bg-emerald-500/55 ring-2 ring-inset ring-emerald-300';
+      arrows.push({ from: bestFrom, to: bestTo, color: '#10b981', opacity: 0.9 });
+    }
+  } else if (currentMove) {
     let myColorBg = 'bg-sky-500/50 ring-2 ring-inset ring-sky-400';
     let myBadgeClass = 'bg-sky-600 text-white';
     myArrowColor = '#38bdf8';
@@ -150,7 +267,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       const bestFrom = currentMove.bestMoveUci.substring(0, 2);
       const bestTo = currentMove.bestMoveUci.substring(2, 4);
 
-      // Best Move highlights (Vibrant Emerald Green)
       if (bestFrom === currentMove.from) {
         highlights[bestFrom] =
           'bg-gradient-to-br from-emerald-500/50 via-amber-500/40 to-amber-500/50 ring-2 ring-inset ring-emerald-400';
@@ -162,7 +278,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       highlights[bestTo] = 'bg-emerald-500/65 ring-2 ring-inset ring-emerald-300 shadow-inner';
       highlights[currentMove.to] = myColorBg;
 
-      // Badges
       squareBadges[bestTo] = {
         text: '💡 최적',
         className: 'bg-emerald-600 text-white ring-1 ring-emerald-300 shadow-sm',
@@ -172,7 +287,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         className: myBadgeClass,
       };
 
-      // Both Arrows with distinct colors
       arrows.push({
         from: currentMove.from,
         to: currentMove.to,
@@ -186,7 +300,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         opacity: 0.95,
       });
     } else {
-      // Best / Good move where player already played best move
       highlights[currentMove.from] = 'bg-emerald-500/40 ring-2 ring-inset ring-emerald-400';
       highlights[currentMove.to] = 'bg-emerald-500/70 ring-2 ring-inset ring-emerald-300';
       squareBadges[currentMove.to] = {
@@ -201,6 +314,46 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       });
     }
   }
+
+  // Build SVG Evaluation Graph coordinates
+  const graphWidth = 320;
+  const graphHeight = 52;
+  const midY = graphHeight / 2;
+  const scoreToGraphY = (cp: number) => {
+    const clamped = Math.max(-700, Math.min(700, cp));
+    return midY - (clamped / 700) * (midY - 4);
+  };
+
+  const allMoves = reviewData.moves;
+  const graphPoints = allMoves.map((m, idx) => {
+    const x =
+      allMoves.length <= 1
+        ? graphWidth / 2
+        : 6 + (idx / (allMoves.length - 1)) * (graphWidth - 12);
+    const y = scoreToGraphY(m.scoreAfter);
+    return { x, y, move: m, idx };
+  });
+
+  const polylinePoints = graphPoints.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const areaPath =
+    graphPoints.length > 0
+      ? `M ${graphPoints[0].x.toFixed(1)},${midY} ` +
+        graphPoints.map((p) => `L ${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ') +
+        ` L ${graphPoints[graphPoints.length - 1].x.toFixed(1)},${midY} Z`
+      : '';
+
+  const currentGraphPoint = currentMove
+    ? graphPoints.find((p) => p.move.ply === currentMove.ply)
+    : null;
+
+  const handleSvgGraphClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (allMoves.length === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const idx = Math.round(ratio * (allMoves.length - 1));
+    handleGraphSelectAllIdx(idx);
+  };
 
   // Quality badge icon and label
   const renderQualityBadge = (quality: MoveAnalysis['quality']) => {
@@ -248,8 +401,17 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     return score > 0 ? `+${val}` : `${val}`;
   };
 
+  const boardOrientation =
+    isRetryMode && currentMove
+      ? currentMove.color === 'b'
+        ? 'black'
+        : 'white'
+      : playerColor === 'b'
+      ? 'black'
+      : 'white';
+
   return (
-    <div className="fixed inset-0 z-50 bg-zinc-950 flex flex-col max-w-lg mx-auto overflow-hidden">
+    <div className="fixed inset-0 z-[60] bg-zinc-950 flex flex-col max-w-lg mx-auto overflow-hidden">
       {/* Top Header with Safe Area Inset */}
       <div
         className="flex items-center justify-between px-4 pb-2.5 border-b border-zinc-800 bg-zinc-900/90 shrink-0"
@@ -269,12 +431,12 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         </button>
       </div>
 
-      {/* Scrollable Middle Content: Stats, Board, and Move Analysis */}
+      {/* Scrollable Middle Content: Stats, Eval Graph, Board, and Move Analysis */}
       <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
         {/* Accuracy & Stats Cards */}
-        <div className="grid grid-cols-2 gap-2 p-3 bg-zinc-900 border-b border-zinc-800 shrink-0">
+        <div className="grid grid-cols-2 gap-2 p-3 pb-2 bg-zinc-900 shrink-0">
           <div
-            className={`p-2.5 rounded-xl border transition-all ${
+            className={`p-2 rounded-xl border transition-all ${
               playerColor === 'w'
                 ? 'bg-zinc-800/90 border-amber-500/40 ring-1 ring-amber-500/20'
                 : 'bg-zinc-800/50 border-zinc-700/40 opacity-75'
@@ -302,7 +464,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           </div>
 
           <div
-            className={`p-2.5 rounded-xl border transition-all ${
+            className={`p-2 rounded-xl border transition-all ${
               playerColor === 'b'
                 ? 'bg-zinc-800/90 border-sky-500/40 ring-1 ring-sky-500/20'
                 : 'bg-zinc-800/50 border-zinc-700/40 opacity-75'
@@ -330,12 +492,112 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           </div>
         </div>
 
-        {/* Review Filter Mode Bar: '내 수만 보기 (기본)' vs '전체 수 보기' */}
+        {/* Interactive Evaluation Line Graph (형세 변화 그래프) */}
+        {allMoves.length > 0 && (
+          <div
+            data-testid="review-eval-graph"
+            className="px-3 pb-2 bg-zinc-900 border-b border-zinc-800 shrink-0"
+          >
+            <div className="rounded-xl bg-zinc-950/90 border border-zinc-800 p-1.5">
+              <div className="flex items-center justify-between px-1.5 pb-1 text-[10px] text-zinc-400">
+                <span className="font-bold text-zinc-300 flex items-center gap-1">
+                  <TrendingUp className="w-3 h-3 text-amber-400" /> 형세 변화 그래프 (탭하여 해당 수로 이동)
+                </span>
+                <span className="font-mono text-amber-300 font-bold">
+                  {currentMove ? formatScore(currentMove.scoreAfter) : '0.0'}
+                </span>
+              </div>
+              <svg
+                viewBox={`0 0 ${graphWidth} ${graphHeight}`}
+                onClick={handleSvgGraphClick}
+                className="w-full h-12 cursor-pointer select-none rounded-lg overflow-hidden bg-zinc-900"
+              >
+                {/* Top half subtle white tint, bottom half subtle dark tint */}
+                <rect x="0" y="0" width={graphWidth} height={midY} fill="rgba(255,255,255,0.04)" />
+                <rect
+                  x="0"
+                  y={midY}
+                  width={graphWidth}
+                  height={midY}
+                  fill="rgba(0,0,0,0.35)"
+                />
+                {/* Midline (0.0 equal evaluation) */}
+                <line
+                  x1="0"
+                  y1={midY}
+                  x2={graphWidth}
+                  y2={midY}
+                  stroke="rgba(161,161,170,0.35)"
+                  strokeDasharray="3 3"
+                  strokeWidth="1"
+                />
+
+                {/* Area Fill */}
+                {areaPath && <path d={areaPath} fill="rgba(251, 191, 36, 0.22)" />}
+
+                {/* Evaluation Curve */}
+                {polylinePoints && (
+                  <polyline
+                    fill="none"
+                    stroke="#fbbf24"
+                    strokeWidth="1.8"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                    points={polylinePoints}
+                  />
+                )}
+
+                {/* Mistake / Blunder Dots */}
+                {graphPoints.map((pt) => {
+                  if (pt.move.quality !== 'blunder' && pt.move.quality !== 'mistake') return null;
+                  return (
+                    <circle
+                      key={`bad_${pt.idx}`}
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={pt.move.quality === 'blunder' ? 3 : 2.3}
+                      fill={pt.move.quality === 'blunder' ? '#f43f5e' : '#f97316'}
+                    />
+                  );
+                })}
+
+                {/* Active Move Indicator */}
+                {currentGraphPoint && (
+                  <g>
+                    <line
+                      x1={currentGraphPoint.x}
+                      y1="0"
+                      x2={currentGraphPoint.x}
+                      y2={graphHeight}
+                      stroke="#10b981"
+                      strokeWidth="1.2"
+                      strokeOpacity="0.85"
+                    />
+                    <circle
+                      cx={currentGraphPoint.x}
+                      cy={currentGraphPoint.y}
+                      r="4"
+                      fill="#10b981"
+                      stroke="#ffffff"
+                      strokeWidth="1.2"
+                    />
+                  </g>
+                )}
+              </svg>
+            </div>
+          </div>
+        )}
+
+        {/* Review Filter Mode Bar */}
         <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900/90 border-b border-zinc-800 shrink-0">
           <div className="flex items-center gap-1.5 text-xs text-zinc-300">
             <span className="w-2 h-2 rounded-full bg-amber-400" />
             <span className="font-semibold">
-              {filterPlayerOnly ? '내가 둔 수만 복기' : '전체 수 복기'}
+              {isRetryMode
+                ? '🎯 실수 다시 두기 훈련 중'
+                : filterPlayerOnly
+                ? '내가 둔 수만 복기'
+                : '전체 수 복기'}
             </span>
             <span className="text-[11px] text-zinc-400">({displayedMoves.length}수)</span>
           </div>
@@ -367,31 +629,53 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
         {/* Chess Board Area with Responsive Sizing */}
         <div className="p-2 w-full flex flex-col items-center justify-center shrink-0">
-          {/* Dynamic Board Color Legend */}
-          {currentMove && hasBestMove && (
-            <div className="flex items-center justify-between px-2.5 py-1 bg-zinc-900/90 rounded-lg border border-zinc-800 text-[11px] mb-1.5 w-full max-w-[min(100%,min(42vh,360px))] shrink-0">
-              <div className="flex items-center gap-2.5">
-                <span className="flex items-center gap-1 font-bold text-emerald-400">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block shadow-xs shadow-emerald-500/60" />
-                  최적의 수 ({currentMove.bestMoveSan})
-                </span>
-                <span className="text-zinc-600 font-bold">vs</span>
-                <span className="flex items-center gap-1 font-bold" style={{ color: myArrowColor }}>
+          {/* Dynamic Board Color Legend or Retry Banner */}
+          {isRetryMode && retryFeedback ? (
+            <div
+              className={`flex items-center justify-between px-3 py-1.5 rounded-xl border text-xs mb-1.5 w-full max-w-[min(100%,min(42vh,360px))] shrink-0 ${
+                retryFeedback.type === 'success'
+                  ? 'bg-emerald-950/85 border-emerald-500/60 text-emerald-200'
+                  : retryFeedback.type === 'error'
+                  ? 'bg-rose-950/85 border-rose-500/60 text-rose-200'
+                  : 'bg-amber-950/80 border-amber-500/50 text-amber-200'
+              }`}
+            >
+              <span className="text-[11px] font-bold leading-snug">{retryFeedback.message}</span>
+            </div>
+          ) : (
+            currentMove &&
+            hasBestMove && (
+              <div className="flex items-center justify-between px-2.5 py-1 bg-zinc-900/90 rounded-lg border border-zinc-800 text-[11px] mb-1.5 w-full max-w-[min(100%,min(42vh,360px))] shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex items-center gap-1 font-bold text-emerald-400">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block shadow-xs shadow-emerald-500/60" />
+                    최적의 수 ({currentMove.bestMoveSan})
+                  </span>
+                  <span className="text-zinc-600 font-bold">vs</span>
                   <span
-                    className="w-2.5 h-2.5 rounded-full inline-block shadow-xs"
-                    style={{ backgroundColor: myArrowColor }}
-                  />
-                  내가 둔 수 ({currentMove.san})
+                    className="flex items-center gap-1 font-bold"
+                    style={{ color: myArrowColor }}
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full inline-block shadow-xs"
+                      style={{ backgroundColor: myArrowColor }}
+                    />
+                    내가 둔 수 ({currentMove.san})
+                  </span>
+                </div>
+                <span className="text-[10px] text-zinc-400 font-medium hidden sm:inline">
+                  체스판 위 색상 비교
                 </span>
               </div>
-              <span className="text-[10px] text-zinc-400 font-medium hidden sm:inline">체스판 위 색상 비교</span>
-            </div>
+            )
           )}
 
           <ChessBoard
             chess={currentChess}
-            orientation={playerColor === 'b' ? 'black' : 'white'}
-            interactive={false}
+            orientation={boardOrientation}
+            interactive={isRetryMode && !retrySolved}
+            onMove={isRetryMode ? handleRetryBoardMove : undefined}
+            lastMove={isRetryMode ? retryLastMove : undefined}
             highlightSquares={highlights}
             squareBadges={squareBadges}
             arrows={arrows}
@@ -401,105 +685,118 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           />
         </div>
 
-        {/* Move Info & Comparison Controls */}
+        {/* Move Info & Comparison / Retry Controls */}
         {currentMove && (
           <div className="px-3 pb-3 space-y-2 shrink-0">
-            {/* Tactical / Missed Check Callout */}
-            {currentMove.missedCheck && (
-              <div className="p-2.5 rounded-xl bg-amber-950/70 border border-amber-500/50 flex items-start gap-2 animate-pulse">
-                <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="text-xs font-bold text-amber-200">놓친 체크 기회 포착!</div>
-                  <div className="text-[11px] text-amber-300/90 leading-relaxed">
-                    이번 수 대신 상대 킹을 체크할 수 있는 기회가 있었습니다.
-                  </div>
-                </div>
+            {/* Retry Mode Controls */}
+            {isRetryMode ? (
+              <div className="flex items-center gap-2">
+                {!retrySolved && (
+                  <button
+                    type="button"
+                    onClick={() => setRetryShowHint(!retryShowHint)}
+                    className="py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-amber-300 text-xs font-bold border border-amber-500/40 flex items-center gap-1.5"
+                  >
+                    <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{retryShowHint ? '힌트 숨기기' : '정답 위치 힌트'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={startRetryForCurrentMove}
+                  className="py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 text-xs font-bold border border-zinc-700 flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>다시 놓기</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={resetRetryMode}
+                  className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5"
+                >
+                  <span>복기 해설로 돌아가기</span>
+                </button>
               </div>
-            )}
-
-            {/* Better Move Example Toggle Bar (Shows Better Move First for Mistake/Blunder) */}
-            {hasBestMove && (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5 p-1 bg-zinc-900 border border-zinc-800 rounded-xl">
+            ) : (
+              <>
+                {/* Interactive "Retry Mistake" CTA Button */}
+                {hasBestMove && (
                   <button
                     type="button"
-                    onClick={() => setShowBestMove(true)}
-                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                      showBestMove
-                        ? 'bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400/60'
-                        : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
+                    data-testid="retry-mistake-btn"
+                    onClick={startRetryForCurrentMove}
+                    className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-zinc-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-md shadow-amber-950/30 transition-all active:scale-98"
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
-                    <span>💡 더 좋은 수 예시 ({currentMove.bestMoveSan})</span>
+                    <Target className="w-4 h-4" />
+                    <span>🎯 이 장면 직접 다시 두어보기 (실수 교정 훈련)</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowBestMove(false)}
-                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                      !showBestMove
-                        ? 'bg-zinc-800 text-amber-300 shadow-md border border-amber-500/40 ring-1 ring-amber-500/30'
-                        : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    <span>내가 둔 수 ({currentMove.san})</span>
-                  </button>
-                </div>
+                )}
 
-                {/* Informational Banner depending on active view */}
-                {showBestMove ? (
-                  <div className="p-2 rounded-xl bg-emerald-950/60 border border-emerald-500/40 flex items-center justify-between text-xs text-emerald-200">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span className="text-[11px]">
-                        추천 수 <strong>{currentMove.bestMoveSan}</strong>을(를) 두었을 때의 보드 상황입니다.
-                      </span>
+                {/* Tactical / Missed Check Callout */}
+                {currentMove.missedCheck && (
+                  <div className="p-2.5 rounded-xl bg-amber-950/70 border border-amber-500/50 flex items-start gap-2 animate-pulse">
+                    <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-xs font-bold text-amber-200">놓친 체크 기회 포착!</div>
+                      <div className="text-[11px] text-amber-300/90 leading-relaxed">
+                        이번 수 대신 상대 킹을 체크할 수 있는 기회가 있었습니다.
+                      </div>
                     </div>
-                    <button
-                      onClick={() => setShowBestMove(false)}
-                      className="text-[11px] underline text-emerald-300 font-bold shrink-0 ml-2"
-                    >
-                      내 착수 보기
-                    </button>
-                  </div>
-                ) : (
-                  <div className="p-2 rounded-xl bg-zinc-850 border border-zinc-700/60 flex items-center justify-between text-xs text-zinc-300">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span className="text-[11px]">
-                        실제 둔 수: <strong>{currentMove.san}</strong> ({currentMove.quality === 'blunder' ? '치명적 악수' : currentMove.quality === 'mistake' ? '실수' : '아쉬운 수'})
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setShowBestMove(true)}
-                      className="text-[11px] text-emerald-400 font-bold shrink-0 ml-2 underline"
-                    >
-                      더 좋은 수 보기
-                    </button>
                   </div>
                 )}
-              </div>
-            )}
 
-            {/* Move Detail Analysis Card */}
-            <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-sm font-bold text-zinc-200">
-                    {currentMove.moveNumber}. {currentMove.color === 'b' && '...'}
-                    {currentMove.san}
-                  </span>
-                  {renderQualityBadge(currentMove.quality)}
+                {/* Better Move Example Toggle Bar */}
+                {hasBestMove && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 p-1 bg-zinc-900 border border-zinc-800 rounded-xl">
+                      <button
+                        type="button"
+                        onClick={() => setShowBestMove(true)}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                          showBestMove
+                            ? 'bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400/60'
+                            : 'text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
+                        <span>💡 더 좋은 수 예시 ({currentMove.bestMoveSan})</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowBestMove(false)}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                          !showBestMove
+                            ? 'bg-zinc-800 text-amber-300 shadow-md border border-amber-500/40 ring-1 ring-amber-500/30'
+                            : 'text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        <span>내가 둔 수 ({currentMove.san})</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Move Detail Analysis Card */}
+                <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-bold text-zinc-200">
+                        {currentMove.moveNumber}. {currentMove.color === 'b' && '...'}
+                        {currentMove.san}
+                      </span>
+                      {renderQualityBadge(currentMove.quality)}
+                    </div>
+                    <span className="font-mono text-xs font-bold text-zinc-400">
+                      평가치: {formatScore(currentMove.scoreAfter)}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-zinc-300 leading-relaxed bg-zinc-800/60 p-2 rounded-lg">
+                    {currentMove.commentary}
+                  </p>
                 </div>
-                <span className="font-mono text-xs font-bold text-zinc-400">
-                  평가치: {formatScore(currentMove.scoreAfter)}
-                </span>
-              </div>
-
-              <p className="text-xs text-zinc-300 leading-relaxed bg-zinc-800/60 p-2 rounded-lg">
-                {currentMove.commentary}
-              </p>
-            </div>
+              </>
+            )}
           </div>
         )}
       </div>

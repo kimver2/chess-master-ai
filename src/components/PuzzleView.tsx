@@ -1,8 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Chess } from 'chess.js';
 import { ChessBoard, BoardArrow } from './ChessBoard';
 import { PieceTheme, BoardTheme } from '../types/chess';
 import { TACTICS_PUZZLES, TacticsPuzzle, PuzzleDifficulty } from '../data/puzzles';
+import {
+  getLocalTodayString,
+  loadDailyPuzzleData,
+  markDailyPuzzleSolved,
+  loadPuzzleRushBest,
+  savePuzzleRushBest,
+  DailyPuzzleData,
+} from '../services/storageService';
 import { soundManager } from '../utils/audio';
 import {
   Sparkles,
@@ -12,14 +20,34 @@ import {
   ArrowLeft,
   BookOpen,
   ChevronRight,
-  ChevronLeft,
-  Trophy,
   Zap,
+  Calendar,
+  Flame,
+  Heart,
+  Timer,
+  Trophy,
 } from 'lucide-react';
 
 interface PuzzleViewProps {
   pieceTheme?: PieceTheme;
   boardTheme?: BoardTheme;
+}
+
+function getDailyPuzzleForDate(dateStr: string): TacticsPuzzle {
+  let hash = 0;
+  for (let i = 0; i < dateStr.length; i++) {
+    hash = (hash * 31 + dateStr.charCodeAt(i)) >>> 0;
+  }
+  return TACTICS_PUZZLES[hash % TACTICS_PUZZLES.length];
+}
+
+function shuffleArray<T>(items: T[]): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }
 
 export const PuzzleView: React.FC<PuzzleViewProps> = ({
@@ -28,6 +56,23 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
 }) => {
   const [selectedDifficulty, setSelectedDifficulty] = useState<'all' | PuzzleDifficulty>('all');
   const [activePuzzle, setActivePuzzle] = useState<TacticsPuzzle | null>(null);
+  const [playMode, setPlayMode] = useState<'standard' | 'daily' | 'rush'>('standard');
+
+  // Daily Puzzle & Rush Stats
+  const todayStr = useMemo(() => getLocalTodayString(), []);
+  const dailyPuzzle = useMemo(() => getDailyPuzzleForDate(todayStr), [todayStr]);
+  const [dailyData, setDailyData] = useState<DailyPuzzleData>(() => loadDailyPuzzleData());
+  const isDailySolvedToday =
+    dailyData.lastSolvedDate === todayStr || dailyData.solvedDates.includes(todayStr);
+
+  // Puzzle Rush State
+  const [rushBest, setRushBest] = useState<number>(() => loadPuzzleRushBest());
+  const [rushDeck, setRushDeck] = useState<TacticsPuzzle[]>([]);
+  const [rushIndex, setRushIndex] = useState<number>(0);
+  const [rushScore, setRushScore] = useState<number>(0);
+  const [rushStrikes, setRushStrikes] = useState<number>(0);
+  const [rushRemainingSec, setRushRemainingSec] = useState<number>(180);
+  const [isRushOver, setIsRushOver] = useState<boolean>(false);
 
   // Puzzle gameplay state
   const [chess, setChess] = useState<Chess | null>(null);
@@ -60,11 +105,44 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
     };
   }, []);
 
+  // Puzzle Rush 1-second Countdown Timer
+  useEffect(() => {
+    if (playMode !== 'rush' || !activePuzzle || isRushOver) return;
+
+    const interval = setInterval(() => {
+      setRushRemainingSec((prev) => {
+        if (prev <= 1) {
+          finishRushRun(rushScore);
+          return 0;
+        }
+        if (prev === 30 || prev <= 10) {
+          soundManager.lowTime();
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [playMode, activePuzzle, isRushOver, rushScore]);
+
+  const finishRushRun = (finalScore: number) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setIsOpponentMoving(false);
+    setIsRushOver(true);
+    const updatedBest = savePuzzleRushBest(finalScore);
+    setRushBest(updatedBest);
+    if (finalScore > 0) {
+      soundManager.victory();
+    } else {
+      soundManager.defeat();
+    }
+  };
+
   const filteredPuzzles = TACTICS_PUZZLES.filter(
     (p) => selectedDifficulty === 'all' || p.difficulty === selectedDifficulty
   );
 
-  const startPuzzle = (puzzle: TacticsPuzzle) => {
+  const loadBoardForPuzzle = (puzzle: TacticsPuzzle) => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -86,42 +164,82 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
     );
   };
 
+  const startPuzzle = (puzzle: TacticsPuzzle, mode: 'standard' | 'daily' = 'standard') => {
+    setPlayMode(mode);
+    setIsRushOver(false);
+    loadBoardForPuzzle(puzzle);
+  };
+
+  const startPuzzleRush = () => {
+    const beginners = shuffleArray(TACTICS_PUZZLES.filter((p) => p.difficulty === 'beginner'));
+    const intermediates = shuffleArray(
+      TACTICS_PUZZLES.filter((p) => p.difficulty === 'intermediate')
+    );
+    const advanced = shuffleArray(TACTICS_PUZZLES.filter((p) => p.difficulty === 'advanced'));
+    const deck = [...beginners, ...intermediates, ...advanced];
+
+    setPlayMode('rush');
+    setRushDeck(deck);
+    setRushIndex(0);
+    setRushScore(0);
+    setRushStrikes(0);
+    setRushRemainingSec(180);
+    setIsRushOver(false);
+    soundManager.gameStart();
+    loadBoardForPuzzle(deck[0]);
+  };
+
+  const advanceRushPuzzle = (nextIdx: number, deck = rushDeck) => {
+    const wrappedIdx = nextIdx % deck.length;
+    setRushIndex(nextIdx);
+    loadBoardForPuzzle(deck[wrappedIdx]);
+  };
+
   const resetCurrentPuzzle = () => {
     if (activePuzzle) {
-      startPuzzle(activePuzzle);
+      loadBoardForPuzzle(activePuzzle);
     }
+  };
+
+  const exitToCatalog = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setIsOpponentMoving(false);
+    setActivePuzzle(null);
+    setIsRushOver(false);
+    setPlayMode('standard');
   };
 
   const nextPuzzle = () => {
     if (!activePuzzle) return;
+    if (playMode === 'daily') {
+      exitToCatalog();
+      return;
+    }
     const currentIndex = TACTICS_PUZZLES.findIndex((p) => p.id === activePuzzle.id);
     if (currentIndex >= 0 && currentIndex < TACTICS_PUZZLES.length - 1) {
-      startPuzzle(TACTICS_PUZZLES[currentIndex + 1]);
+      startPuzzle(TACTICS_PUZZLES[currentIndex + 1], 'standard');
     } else {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      setIsOpponentMoving(false);
-      setActivePuzzle(null);
-    }
-  };
-
-  const prevPuzzle = () => {
-    if (!activePuzzle) return;
-    const currentIndex = TACTICS_PUZZLES.findIndex((p) => p.id === activePuzzle.id);
-    if (currentIndex > 0) {
-      startPuzzle(TACTICS_PUZZLES[currentIndex - 1]);
+      exitToCatalog();
     }
   };
 
   const handlePlayerMove = (from: string, to: string, promotion = 'q') => {
-    if (!chess || !activePuzzle || isSuccess || isOpponentMoving || feedbackType === 'error') return;
+    if (
+      !chess ||
+      !activePuzzle ||
+      isSuccess ||
+      isOpponentMoving ||
+      isRushOver ||
+      feedbackType === 'error'
+    ) {
+      return;
+    }
 
     try {
       const move = chess.move({ from, to, promotion });
       if (!move) return;
 
       const expectedSan = activePuzzle.solutionMoves[currentStep];
-
-      // Verify if the move matches the puzzle's solution or delivers checkmate immediately
       const isExpected = move.san === expectedSan;
       const isCheckmateNow = chess.isCheckmate();
 
@@ -147,17 +265,38 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
           setIsSuccess(true);
           soundManager.victory();
           setFeedbackType('success');
-          setFeedbackMessage('🎉 정답입니다! 완벽한 체크메이트를 달성하셨습니다!');
 
-          // Record in localStorage
+          // Record puzzle cleared in localStorage
           try {
             localStorage.setItem(`chess_puzzle_cleared_${activePuzzle.id}`, 'true');
             setClearedIds((prev) => new Set(prev).add(activePuzzle.id));
           } catch {}
+
+          if (playMode === 'daily') {
+            const updatedDaily = markDailyPuzzleSolved(todayStr);
+            setDailyData(updatedDaily);
+            setFeedbackMessage(
+              `🎉 오늘의 데일리 퍼즐 클리어! (🔥 ${updatedDaily.streak}일 연속 달성)`
+            );
+            return;
+          }
+
+          if (playMode === 'rush') {
+            const newScore = rushScore + 1;
+            setRushScore(newScore);
+            setFeedbackMessage(`⚡ 정답! (+1점 · 현재 ${newScore}점)`);
+            if (timerRef.current) clearTimeout(timerRef.current);
+            timerRef.current = setTimeout(() => {
+              advanceRushPuzzle(rushIndex + 1);
+            }, 380);
+            return;
+          }
+
+          setFeedbackMessage('🎉 정답입니다! 완벽한 체크메이트를 달성하셨습니다!');
           return;
         }
 
-        // If there is an opponent response move
+        // Opponent response move
         setIsOpponentMoving(true);
         const opponentExpectedSan = activePuzzle.solutionMoves[nextStepIndex];
         setCurrentStep(nextStepIndex + 1);
@@ -180,30 +319,43 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
           } catch (e) {
             console.error('Opponent move error:', e);
           }
-        }, 500);
+        }, 450);
       } else {
         // Wrong move
         soundManager.defeat();
         setFeedbackType('error');
-        setFeedbackMessage('체크메이트가 되지 않았습니다! 다시 시도해보세요.');
 
-        // Auto undo after 1.1 seconds
+        if (playMode === 'rush') {
+          const nextStrikes = rushStrikes + 1;
+          setRushStrikes(nextStrikes);
+          if (nextStrikes >= 3) {
+            setFeedbackMessage('💔 라이프 3개 소진! 퍼즐 러시가 종료되었습니다.');
+            finishRushRun(rushScore);
+          } else {
+            setFeedbackMessage(`💔 오답! 남은 기회 ${3 - nextStrikes}번 — 다음 문제로 이동합니다.`);
+            if (timerRef.current) clearTimeout(timerRef.current);
+            timerRef.current = setTimeout(() => {
+              advanceRushPuzzle(rushIndex + 1);
+            }, 700);
+          }
+          return;
+        }
+
+        setFeedbackMessage('체크메이트가 되지 않았습니다! 다시 시도해보세요.');
         if (timerRef.current) clearTimeout(timerRef.current);
         timerRef.current = setTimeout(() => {
           resetCurrentPuzzle();
-        }, 1100);
+        }, 1000);
       }
     } catch {
       // Invalid move
     }
   };
 
-  // Compute hint arrows or square highlights when hint is enabled
   const getHintArrows = (): BoardArrow[] => {
-    if (!showHint || !activePuzzle || !chess) return [];
+    if (!showHint || !activePuzzle || !chess || playMode === 'rush') return [];
     try {
       const expectedSan = activePuzzle.solutionMoves[currentStep];
-      // Clone chess to find from and to of the expected move
       const c = new Chess(chess.fen());
       const m = c.move(expectedSan);
       if (m) {
@@ -214,7 +366,7 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
   };
 
   const getHintHighlights = (): Record<string, string> => {
-    if (!showHint || !activePuzzle || !chess) return {};
+    if (!showHint || !activePuzzle || !chess || playMode === 'rush') return {};
     try {
       const expectedSan = activePuzzle.solutionMoves[currentStep];
       const c = new Chess(chess.fen());
@@ -232,8 +384,65 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
   const clearedCount = clearedIds.size;
   const progressPercent = Math.round((clearedCount / TACTICS_PUZZLES.length) * 100);
 
+  const formatRushTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
+
   // ==========================================
-  // Render: Active Puzzle Screen
+  // Render: Puzzle Rush Summary Modal/Screen
+  // ==========================================
+  if (playMode === 'rush' && isRushOver) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-full p-4 select-none">
+        <div className="bg-zinc-900 border border-amber-500/40 rounded-2xl p-6 w-full max-w-sm text-center space-y-4 shadow-2xl">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-3xl">
+            ⚡
+          </div>
+          <div>
+            <h3 className="text-lg font-black text-white">퍼즐 러시 종료!</h3>
+            <p className="text-xs text-zinc-400 mt-1">
+              {rushRemainingSec <= 0 ? '3분 제한 시간이 모두 경과했습니다.' : '라이프 3개를 모두 사용했습니다.'}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+              <span className="text-[11px] text-zinc-400 block">이번 달성 점수</span>
+              <strong className="text-2xl font-black text-amber-400 font-mono">{rushScore}</strong>
+            </div>
+            <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+              <span className="text-[11px] text-emerald-400 block flex items-center justify-center gap-1">
+                <Trophy className="w-3 h-3" /> 내 최고 기록
+              </span>
+              <strong className="text-2xl font-black text-emerald-300 font-mono">{rushBest}</strong>
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={exitToCatalog}
+              className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold transition-all"
+            >
+              목록으로
+            </button>
+            <button
+              type="button"
+              onClick={startPuzzleRush}
+              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 text-zinc-950 text-xs font-black shadow-md transition-all"
+            >
+              ⚡ 다시 도전
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // Render: Active Puzzle Screen (Standard / Daily / Rush)
   // ==========================================
   if (activePuzzle && chess) {
     const hintArrows = getHintArrows();
@@ -242,39 +451,79 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
     return (
       <div className="flex flex-col min-h-full justify-between p-3 space-y-2 select-none">
         {/* Top Header */}
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => {
-              if (timerRef.current) clearTimeout(timerRef.current);
-              setIsOpponentMoving(false);
-              setActivePuzzle(null);
-            }}
-            className="flex items-center gap-1 text-xs font-bold text-zinc-400 hover:text-amber-400 py-1.5 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800 transition-colors"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            목록으로
-          </button>
+        {playMode === 'rush' ? (
+          <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-zinc-900 border border-amber-500/40">
+            <button
+              type="button"
+              onClick={() => finishRushRun(rushScore)}
+              className="text-[11px] font-bold text-zinc-400 hover:text-rose-300 px-2 py-1 rounded-lg bg-zinc-800"
+            >
+              종료
+            </button>
 
-          <div className="text-center min-w-0 px-2">
-            <div className="text-xs font-black text-zinc-100 truncate">
-              #{activePuzzle.id}. {activePuzzle.title}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 font-mono font-black text-sm text-amber-300">
+                <Zap className="w-4 h-4 text-amber-400 fill-amber-400" />
+                <span>{rushScore}점</span>
+              </div>
+              <div
+                className={`flex items-center gap-1 font-mono font-black text-sm px-2 py-0.5 rounded-lg ${
+                  rushRemainingSec <= 30
+                    ? 'bg-rose-500/20 text-rose-300 animate-pulse'
+                    : 'bg-zinc-800 text-zinc-100'
+                }`}
+              >
+                <Timer className="w-3.5 h-3.5" />
+                <span>{formatRushTime(rushRemainingSec)}</span>
+              </div>
             </div>
-            <div className="text-[10px] text-zinc-400 truncate">{activePuzzle.theme}</div>
-          </div>
 
-          <span
-            className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
-              activePuzzle.difficulty === 'beginner'
-                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                : activePuzzle.difficulty === 'intermediate'
-                ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
-            }`}
-          >
-            {activePuzzle.difficultyLabel.split(' ')[0]}
-          </span>
-        </div>
+            <div className="flex items-center gap-1">
+              {[0, 1, 2].map((heartIdx) => (
+                <Heart
+                  key={heartIdx}
+                  className={`w-4 h-4 ${
+                    heartIdx < 3 - rushStrikes
+                      ? 'text-rose-500 fill-rose-500'
+                      : 'text-zinc-700'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={exitToCatalog}
+              className="flex items-center gap-1 text-xs font-bold text-zinc-400 hover:text-amber-400 py-1.5 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800 transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              목록으로
+            </button>
+
+            <div className="text-center min-w-0 px-2">
+              <div className="text-xs font-black text-zinc-100 truncate">
+                {playMode === 'daily'
+                  ? `📅 오늘의 퍼즐 (${todayStr})`
+                  : `#${activePuzzle.id}. ${activePuzzle.title}`}
+              </div>
+              <div className="text-[10px] text-zinc-400 truncate">{activePuzzle.theme}</div>
+            </div>
+
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                activePuzzle.difficulty === 'beginner'
+                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                  : activePuzzle.difficulty === 'intermediate'
+                  ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                  : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+              }`}
+            >
+              {activePuzzle.difficultyLabel.split(' ')[0]}
+            </span>
+          </div>
+        )}
 
         {/* Mission Guidance Banner */}
         <div
@@ -315,11 +564,12 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
             arrows={hintArrows}
             pieceTheme={pieceTheme}
             boardTheme={boardTheme}
+            className="w-full max-w-[min(100%,min(44vh,370px))]"
           />
         </div>
 
-        {/* Hint Box (if toggled) */}
-        {showHint && (
+        {/* Hint Box (Standard & Daily only) */}
+        {showHint && playMode !== 'rush' && (
           <div className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 flex items-start gap-2 shadow-sm animate-fadeIn">
             <Lightbulb className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
             <div className="leading-tight">
@@ -329,8 +579,8 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
           </div>
         )}
 
-        {/* Explanation Box (if toggled) */}
-        {showExplanation && (
+        {/* Explanation Box (Standard & Daily only) */}
+        {showExplanation && playMode !== 'rush' && (
           <div className="px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 space-y-1 shadow-sm animate-fadeIn">
             <div className="flex items-center gap-1.5 font-bold text-amber-300 text-xs">
               <BookOpen className="w-3.5 h-3.5" /> 정답 수순 및 해설
@@ -343,72 +593,75 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
         )}
 
         {/* In-Game Bottom Actions */}
-        <div className="space-y-1.5 pt-0.5">
-          {isSuccess ? (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={resetCurrentPuzzle}
-                className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-semibold border border-zinc-800 transition-all flex items-center justify-center gap-1"
-              >
-                <RotateCcw className="w-3.5 h-3.5" /> 다시 풀기
-              </button>
-              <button
-                type="button"
-                onClick={nextPuzzle}
-                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/40 transition-all"
-              >
-                다음 문제 도전 <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-4 gap-1.5">
-              <button
-                type="button"
-                onClick={() => setShowHint(!showHint)}
-                className={`py-2 px-1 rounded-xl text-[11px] font-bold border transition-all flex items-center justify-center gap-1 ${
-                  showHint
-                    ? 'bg-amber-500/20 border-amber-400 text-amber-300'
-                    : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800'
-                }`}
-              >
-                <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
-                힌트
-              </button>
+        {playMode !== 'rush' && (
+          <div className="space-y-1.5 pt-0.5">
+            {isSuccess ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={resetCurrentPuzzle}
+                  className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-semibold border border-zinc-800 transition-all flex items-center justify-center gap-1"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> 다시 풀기
+                </button>
+                <button
+                  type="button"
+                  onClick={nextPuzzle}
+                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/40 transition-all"
+                >
+                  {playMode === 'daily' ? '퍼즐 홈으로 돌아가기' : '다음 문제 도전'}{' '}
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-4 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowHint(!showHint)}
+                  className={`py-2 px-1 rounded-xl text-[11px] font-bold border transition-all flex items-center justify-center gap-1 ${
+                    showHint
+                      ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                      : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800'
+                  }`}
+                >
+                  <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
+                  힌트
+                </button>
 
-              <button
-                type="button"
-                onClick={resetCurrentPuzzle}
-                className="py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[11px] font-semibold border border-zinc-800 transition-all flex items-center justify-center gap-1"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-zinc-400" />
-                다시 시도
-              </button>
+                <button
+                  type="button"
+                  onClick={resetCurrentPuzzle}
+                  className="py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[11px] font-semibold border border-zinc-800 transition-all flex items-center justify-center gap-1"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-zinc-400" />
+                  다시 시도
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setShowExplanation(!showExplanation)}
-                className={`py-2 px-1 rounded-xl text-[11px] font-bold border transition-all flex items-center justify-center gap-1 ${
-                  showExplanation
-                    ? 'bg-teal-500/20 border-teal-400 text-teal-300'
-                    : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800'
-                }`}
-              >
-                <BookOpen className="w-3.5 h-3.5 text-teal-400" />
-                해설
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setShowExplanation(!showExplanation)}
+                  className={`py-2 px-1 rounded-xl text-[11px] font-bold border transition-all flex items-center justify-center gap-1 ${
+                    showExplanation
+                      ? 'bg-teal-500/20 border-teal-400 text-teal-300'
+                      : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800'
+                  }`}
+                >
+                  <BookOpen className="w-3.5 h-3.5 text-teal-400" />
+                  해설
+                </button>
 
-              <button
-                type="button"
-                onClick={nextPuzzle}
-                className="py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[11px] font-bold border border-zinc-800 transition-all flex items-center justify-center gap-1"
-              >
-                다음
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-        </div>
+                <button
+                  type="button"
+                  onClick={nextPuzzle}
+                  className="py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[11px] font-bold border border-zinc-800 transition-all flex items-center justify-center gap-1"
+                >
+                  {playMode === 'daily' ? '목록' : '다음'}
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -417,9 +670,9 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
   // Render: Puzzle List / Catalog Screen
   // ==========================================
   return (
-    <div className="flex flex-col h-full p-3 space-y-3 overflow-hidden select-none">
+    <div className="flex flex-col h-full p-3 space-y-2.5 overflow-hidden select-none">
       {/* Title & Progress Header */}
-      <div className="bg-gradient-to-r from-amber-500/10 via-zinc-900 to-zinc-900 p-3.5 rounded-2xl border border-zinc-800/80 shadow-md">
+      <div className="bg-gradient-to-r from-amber-500/10 via-zinc-900 to-zinc-900 p-3 rounded-2xl border border-zinc-800/80 shadow-md shrink-0">
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm">
@@ -427,7 +680,7 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
             </div>
             <div>
               <h2 className="text-sm font-extrabold text-zinc-100">체크메이트 전술 퍼즐</h2>
-              <p className="text-[10px] text-zinc-400">1~3수 안에 결정타를 꽂는 실전 체크메이트 50선</p>
+              <p className="text-[10px] text-zinc-400">실전 체크메이트 50선 · 데일리 & 타임어택</p>
             </div>
           </div>
           <div className="text-right">
@@ -445,6 +698,70 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
             style={{ width: `${progressPercent}%` }}
           />
         </div>
+      </div>
+
+      {/* Special Modes Grid: Daily Puzzle & Puzzle Rush */}
+      <div className="grid grid-cols-2 gap-2 shrink-0">
+        {/* Daily Puzzle Card */}
+        <button
+          type="button"
+          data-testid="daily-puzzle-card"
+          onClick={() => startPuzzle(dailyPuzzle, 'daily')}
+          className="p-2.5 rounded-xl bg-gradient-to-br from-emerald-950/60 to-zinc-900 border border-emerald-500/40 hover:border-emerald-400 text-left space-y-1.5 transition-all active:scale-98 shadow-sm"
+        >
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-300">
+              <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+              오늘의 퍼즐
+            </span>
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[9px] font-bold">
+              <Flame className="w-2.5 h-2.5 text-orange-400 fill-orange-400" />
+              {dailyData.streak}일
+            </span>
+          </div>
+          <div className="text-[10px] text-zinc-300 truncate font-semibold">
+            {dailyPuzzle.title}
+          </div>
+          <div className="flex items-center justify-between pt-0.5">
+            <span className="text-[9px] text-zinc-400 font-mono">{todayStr}</span>
+            <span
+              className={`px-2 py-0.5 rounded-md text-[10px] font-black ${
+                isDailySolvedToday
+                  ? 'bg-emerald-500/20 text-emerald-300'
+                  : 'bg-emerald-500 text-zinc-950'
+              }`}
+            >
+              {isDailySolvedToday ? '완료 ✓' : '도전'}
+            </span>
+          </div>
+        </button>
+
+        {/* Puzzle Rush Card */}
+        <button
+          type="button"
+          data-testid="puzzle-rush-card"
+          onClick={startPuzzleRush}
+          className="p-2.5 rounded-xl bg-gradient-to-br from-amber-950/60 to-zinc-900 border border-amber-500/40 hover:border-amber-400 text-left space-y-1.5 transition-all active:scale-98 shadow-sm"
+        >
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-1 text-[11px] font-black text-amber-300">
+              <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+              3분 퍼즐 러시
+            </span>
+            <span className="text-[9px] font-mono font-bold text-amber-200 bg-zinc-800 px-1.5 py-0.2 rounded-full">
+              최고 {rushBest}점
+            </span>
+          </div>
+          <div className="text-[10px] text-zinc-300 truncate font-semibold">
+            타임어택 · 라이프 ❤️×3
+          </div>
+          <div className="flex items-center justify-between pt-0.5">
+            <span className="text-[9px] text-zinc-400">연속 메이트 기록 도전</span>
+            <span className="px-2 py-0.5 rounded-md bg-amber-500 text-zinc-950 text-[10px] font-black">
+              시작 ⚡
+            </span>
+          </div>
+        </button>
       </div>
 
       {/* Difficulty Category Tabs */}
@@ -490,7 +807,7 @@ export const PuzzleView: React.FC<PuzzleViewProps> = ({
           return (
             <div
               key={puzzle.id}
-              onClick={() => startPuzzle(puzzle)}
+              onClick={() => startPuzzle(puzzle, 'standard')}
               className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
                 isCleared
                   ? 'bg-zinc-900/60 border-emerald-500/30 hover:border-emerald-500/50'

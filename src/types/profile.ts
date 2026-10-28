@@ -38,7 +38,7 @@ export interface UserProfile {
   avatarColor: AvatarColor;
   rating: number; // Elo 레이팅 (기본 1000)
   stats: UserStats;
-  levelRecords: Record<number, LevelRecord>; // Level 1 ~ 8
+  levelRecords: Record<number, LevelRecord>; // Level 1 ~ 10
   createdAt: string;
   updatedAt: string;
 }

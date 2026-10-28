@@ -14,7 +14,7 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { UserProfile, LeaderboardEntry, getTier } from '../types/profile';
-import { getLocalLadder, AI_NAMES } from '../services/storageService';
+import { getLocalLadder, AI_NAMES, ALL_AI_LEVELS } from '../services/storageService';
 import {
   isFirebaseConfigured,
   fetchOnlineLeaderboard,
@@ -154,9 +154,9 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           </button>
         </div>
 
-        {/* Level Tabs (Lv.1 to Lv.8) */}
+        {/* Level Tabs (Lv.1 to Lv.10) */}
         <div className="p-2 bg-zinc-950/40 border-b border-zinc-800 flex gap-1.5 overflow-x-auto no-scrollbar shrink-0">
-          {[1, 2, 3, 4, 5, 6, 7, 8].map((lvl) => {
+          {ALL_AI_LEVELS.map((lvl) => {
             const isSelected = selectedLevel === lvl;
             const isConquered = currentUser.levelRecords[lvl]?.conquered;
             return (

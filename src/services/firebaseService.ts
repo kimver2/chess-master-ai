@@ -2,10 +2,11 @@ import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import {
   getFirestore,
   collection,
-  addDoc,
+  doc,
+  getDoc,
+  setDoc,
   query,
   where,
-  orderBy,
   limit,
   getDocs,
   Firestore,
@@ -95,7 +96,8 @@ export function getDb(): Firestore | null {
 }
 
 /**
- * Submit player score to Firestore 'rankings' collection
+ * Submit player score to Firestore 'rankings' collection using deterministic per-user/per-level document ID
+ * so each player maintains a single up-to-date best record per AI level.
  */
 export async function submitOnlineScore(
   entry: Omit<LeaderboardEntry, 'id'>
@@ -106,21 +108,44 @@ export async function submitOnlineScore(
   }
 
   try {
-    const colRef = collection(db, 'rankings');
-    const docRef = await addDoc(colRef, {
+    const docId = `${entry.userId}_lvl_${entry.aiLevel}`;
+    const docRef = doc(db, 'rankings', docId);
+    const existingSnap = await getDoc(docRef);
+
+    let bestMoves = entry.moves;
+    let bestTimeSec = entry.timeSec;
+    let bestDate = entry.date;
+
+    if (existingSnap.exists()) {
+      const prev = existingSnap.data();
+      const prevMoves = typeof prev.moves === 'number' ? prev.moves : Infinity;
+      const prevTimeSec = typeof prev.timeSec === 'number' ? prev.timeSec : Infinity;
+
+      const isNewStrictlyBetter =
+        entry.moves < prevMoves ||
+        (entry.moves === prevMoves && entry.timeSec < prevTimeSec);
+
+      if (!isNewStrictlyBetter) {
+        bestMoves = prevMoves;
+        bestTimeSec = prevTimeSec;
+        bestDate = prev.date || entry.date;
+      }
+    }
+
+    await setDoc(docRef, {
       userId: entry.userId,
       nickname: entry.nickname,
       avatar: entry.avatar,
       avatarColor: entry.avatarColor,
       rating: entry.rating,
       aiLevel: entry.aiLevel,
-      moves: entry.moves,
-      timeSec: entry.timeSec,
-      date: entry.date,
-      createdAt: new Date().toISOString(),
+      moves: bestMoves,
+      timeSec: bestTimeSec,
+      date: bestDate,
+      updatedAt: new Date().toISOString(),
     });
 
-    return { success: true, docId: docRef.id };
+    return { success: true, docId };
   } catch (err: any) {
     console.error('Failed to submit online score:', err);
     return { success: false, error: err.message || 'Submission failed' };

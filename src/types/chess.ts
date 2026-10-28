@@ -14,7 +14,56 @@ export type GameOverReason =
   | 'threefold_repetition'
   | 'timeout'
   | 'resignation'
+  | 'draw_agreement'
   | null;
+
+export interface PlayedMoveRecord {
+  ply: number;
+  moveNumber: number;
+  color: PieceColor;
+  san: string;
+  from: string;
+  to: string;
+  promotion?: string;
+  captured?: string;
+  fenBefore: string;
+  fenAfter: string;
+  hintFollowed?: boolean;
+  hintBestSan?: string;
+}
+
+export interface SavedActiveGame {
+  fen: string;
+  playedMoves: PlayedMoveRecord[];
+  difficulty: DifficultyLevel;
+  timeLimit: TimeLimit;
+  chosenSide: PlayerSide;
+  playerColor: PieceColor;
+  whiteTimeMs: number | null;
+  blackTimeMs: number | null;
+  lastMove: { from: string; to: string } | null;
+  startedAt: number;
+  savedAt: number;
+}
+
+export type ArchiveGameMode = 'ai' | 'pvp_online' | 'pvp_local';
+
+export interface ArchivedGame {
+  id: string;
+  date: string;
+  mode: ArchiveGameMode;
+  opponentName: string;
+  aiLevel?: number;
+  playerColor: PieceColor;
+  result: 'win' | 'loss' | 'draw';
+  reason: GameOverReason;
+  moveCount: number;
+  durationSec: number;
+  pgn: string;
+  finalFen: string;
+  openingName?: string;
+  moves: PlayedMoveRecord[];
+}
 
 export type MoveQuality = 'best' | 'good' | 'inaccuracy' | 'mistake' | 'blunder' | 'book';
 
