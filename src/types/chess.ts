@@ -83,6 +83,12 @@ export interface MoveAnalysis {
   quality: MoveQuality;
   bestMoveSan?: string;
   bestMoveUci?: string;
+  oppBestReplyUci?: string;
+  evalBestScore?: number; // centipawns from White's perspective if bestMove had been played
+  whyPlayedSuboptimal?: string;
+  whyBestBetter?: string;
+  playedLineSan?: string[];
+  bestLineSan?: string[];
   missedCheck: boolean;
   commentary: string;
 }

@@ -264,41 +264,85 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     }
 
     if (hasBestMove && currentMove.bestMoveUci) {
-      const bestFrom = currentMove.bestMoveUci.substring(0, 2);
-      const bestTo = currentMove.bestMoveUci.substring(2, 4);
+      if (showBestMove) {
+        const bestFrom = currentMove.bestMoveUci.substring(0, 2);
+        const bestTo = currentMove.bestMoveUci.substring(2, 4);
 
-      if (bestFrom === currentMove.from) {
-        highlights[bestFrom] =
-          'bg-gradient-to-br from-emerald-500/50 via-amber-500/40 to-amber-500/50 ring-2 ring-inset ring-emerald-400';
+        if (bestFrom === currentMove.from) {
+          highlights[bestFrom] =
+            'bg-gradient-to-br from-emerald-500/50 via-amber-500/40 to-amber-500/50 ring-2 ring-inset ring-emerald-400';
+        } else {
+          highlights[bestFrom] = 'bg-emerald-500/40 ring-2 ring-inset ring-emerald-400';
+          highlights[currentMove.from] = myColorBg;
+        }
+
+        highlights[currentMove.to] = myColorBg;
+        highlights[bestTo] = 'bg-emerald-500/65 ring-2 ring-inset ring-emerald-300 shadow-inner';
+
+        if (bestTo !== currentMove.to) {
+          squareBadges[currentMove.to] = {
+            text: '내 착수',
+            className: myBadgeClass,
+          };
+        }
+        squareBadges[bestTo] = {
+          text: '💡 최적',
+          className: 'bg-emerald-600 text-white ring-1 ring-emerald-300 shadow-sm',
+        };
+
+        arrows.push({
+          from: currentMove.from,
+          to: currentMove.to,
+          color: myArrowColor,
+          opacity: 0.85,
+        });
+        arrows.push({
+          from: bestFrom,
+          to: bestTo,
+          color: '#10b981',
+          opacity: 0.95,
+        });
       } else {
-        highlights[bestFrom] = 'bg-emerald-500/40 ring-2 ring-inset ring-emerald-400';
+        // Viewing played suboptimal move ("내가 둔 수") + opponent's best reply refutation
         highlights[currentMove.from] = myColorBg;
+        highlights[currentMove.to] = myColorBg;
+        squareBadges[currentMove.to] = {
+          text: '내 착수',
+          className: myBadgeClass,
+        };
+        arrows.push({
+          from: currentMove.from,
+          to: currentMove.to,
+          color: myArrowColor,
+          opacity: 0.85,
+        });
+
+        if (currentMove.oppBestReplyUci && currentMove.oppBestReplyUci.length >= 4) {
+          const oppFrom = currentMove.oppBestReplyUci.substring(0, 2);
+          const oppTo = currentMove.oppBestReplyUci.substring(2, 4);
+          highlights[oppFrom] = 'bg-purple-500/45 ring-2 ring-inset ring-purple-400';
+          if (oppTo !== currentMove.to) {
+            highlights[oppTo] = 'bg-purple-500/60 ring-2 ring-inset ring-purple-300';
+            squareBadges[oppTo] = {
+              text: '⚡ 응수',
+              className: 'bg-purple-600 text-white ring-1 ring-purple-300 shadow-sm',
+            };
+          } else {
+            highlights[currentMove.to] =
+              'bg-gradient-to-br from-amber-500/55 to-purple-600/65 ring-2 ring-inset ring-purple-300';
+            squareBadges[oppFrom] = {
+              text: '⚡ 응수',
+              className: 'bg-purple-600 text-white ring-1 ring-purple-300 shadow-sm',
+            };
+          }
+          arrows.push({
+            from: oppFrom,
+            to: oppTo,
+            color: '#a855f7',
+            opacity: 0.95,
+          });
+        }
       }
-
-      highlights[bestTo] = 'bg-emerald-500/65 ring-2 ring-inset ring-emerald-300 shadow-inner';
-      highlights[currentMove.to] = myColorBg;
-
-      squareBadges[bestTo] = {
-        text: '💡 최적',
-        className: 'bg-emerald-600 text-white ring-1 ring-emerald-300 shadow-sm',
-      };
-      squareBadges[currentMove.to] = {
-        text: '내 착수',
-        className: myBadgeClass,
-      };
-
-      arrows.push({
-        from: currentMove.from,
-        to: currentMove.to,
-        color: myArrowColor,
-        opacity: 0.85,
-      });
-      arrows.push({
-        from: bestFrom,
-        to: bestTo,
-        color: '#10b981',
-        opacity: 0.95,
-      });
     } else {
       highlights[currentMove.from] = 'bg-emerald-500/40 ring-2 ring-inset ring-emerald-400';
       highlights[currentMove.to] = 'bg-emerald-500/70 ring-2 ring-inset ring-emerald-300';
@@ -646,23 +690,47 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             currentMove &&
             hasBestMove && (
               <div className="flex items-center justify-between px-2.5 py-1 bg-zinc-900/90 rounded-lg border border-zinc-800 text-[11px] mb-1.5 w-full max-w-[min(100%,min(42vh,360px))] shrink-0">
-                <div className="flex items-center gap-2.5">
-                  <span className="flex items-center gap-1 font-bold text-emerald-400">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block shadow-xs shadow-emerald-500/60" />
-                    최적의 수 ({currentMove.bestMoveSan})
-                  </span>
-                  <span className="text-zinc-600 font-bold">vs</span>
-                  <span
-                    className="flex items-center gap-1 font-bold"
-                    style={{ color: myArrowColor }}
-                  >
+                {showBestMove ? (
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex items-center gap-1 font-bold text-emerald-400">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block shadow-xs shadow-emerald-500/60" />
+                      최적의 수 ({currentMove.bestMoveSan})
+                    </span>
+                    <span className="text-zinc-600 font-bold">vs</span>
                     <span
-                      className="w-2.5 h-2.5 rounded-full inline-block shadow-xs"
-                      style={{ backgroundColor: myArrowColor }}
-                    />
-                    내가 둔 수 ({currentMove.san})
-                  </span>
-                </div>
+                      className="flex items-center gap-1 font-bold"
+                      style={{ color: myArrowColor }}
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full inline-block shadow-xs"
+                        style={{ backgroundColor: myArrowColor }}
+                      />
+                      내가 둔 수 ({currentMove.san})
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="flex items-center gap-1 font-bold"
+                      style={{ color: myArrowColor }}
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full inline-block shadow-xs"
+                        style={{ backgroundColor: myArrowColor }}
+                      />
+                      내가 둔 수 ({currentMove.san})
+                    </span>
+                    {currentMove.playedLineSan && currentMove.playedLineSan.length > 0 && (
+                      <>
+                        <span className="text-zinc-500 font-bold">→</span>
+                        <span className="flex items-center gap-1 font-bold text-purple-300">
+                          <span className="w-2.5 h-2.5 rounded-full bg-purple-500 inline-block shadow-xs shadow-purple-500/60" />
+                          상대 응수 ({currentMove.playedLineSan[0]})
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
                 <span className="text-[10px] text-zinc-400 font-medium hidden sm:inline">
                   체스판 위 색상 비교
                 </span>
@@ -727,8 +795,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                     onClick={startRetryForCurrentMove}
                     className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-zinc-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-md shadow-amber-950/30 transition-all active:scale-98"
                   >
-                    <Target className="w-4 h-4" />
-                    <span>🎯 이 장면 직접 다시 두어보기 (실수 교정 훈련)</span>
+                    <Target className="w-4 h-4 shrink-0" />
+                    <span>이 장면 직접 다시 두어보기 (실수 교정 훈련)</span>
                   </button>
                 )}
 
@@ -777,23 +845,111 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 )}
 
                 {/* Move Detail Analysis Card */}
-                <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm font-bold text-zinc-200">
+                <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-2">
+                  <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-mono text-sm font-bold text-zinc-200 whitespace-nowrap shrink-0">
                         {currentMove.moveNumber}. {currentMove.color === 'b' && '...'}
                         {currentMove.san}
                       </span>
                       {renderQualityBadge(currentMove.quality)}
                     </div>
-                    <span className="font-mono text-xs font-bold text-zinc-400">
-                      평가치: {formatScore(currentMove.scoreAfter)}
-                    </span>
+                    {hasBestMove && currentMove.evalBestScore !== undefined ? (
+                      <span className="font-mono text-[11px] font-bold text-zinc-400 whitespace-nowrap shrink-0">
+                        최적{' '}
+                        <span className="text-emerald-400">
+                          {formatScore(currentMove.evalBestScore)}
+                        </span>{' '}
+                        → 실전{' '}
+                        <span className="text-zinc-200">
+                          {formatScore(currentMove.scoreAfter)}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="font-mono text-xs font-bold text-zinc-400 whitespace-nowrap shrink-0">
+                        평가치: {formatScore(currentMove.scoreAfter)}
+                      </span>
+                    )}
                   </div>
 
-                  <p className="text-xs text-zinc-300 leading-relaxed bg-zinc-800/60 p-2 rounded-lg">
-                    {currentMove.commentary}
-                  </p>
+                  {hasBestMove &&
+                  (currentMove.whyPlayedSuboptimal || currentMove.whyBestBetter) ? (
+                    <div data-testid="move-coach-explanation" className="space-y-2">
+                      {currentMove.whyPlayedSuboptimal && (
+                        <div
+                          data-testid="why-played-suboptimal"
+                          className={`p-2 rounded-lg border space-y-1 ${
+                            currentMove.quality === 'blunder'
+                              ? 'bg-rose-950/35 border-rose-500/35'
+                              : currentMove.quality === 'mistake'
+                              ? 'bg-orange-950/35 border-orange-500/35'
+                              : currentMove.quality === 'inaccuracy'
+                              ? 'bg-amber-950/35 border-amber-500/35'
+                              : 'bg-sky-950/30 border-sky-500/30'
+                          }`}
+                        >
+                          <div
+                            className={`text-[11px] font-extrabold flex items-center gap-1 ${
+                              currentMove.quality === 'blunder'
+                                ? 'text-rose-300'
+                                : currentMove.quality === 'mistake'
+                                ? 'text-orange-300'
+                                : currentMove.quality === 'inaccuracy'
+                                ? 'text-amber-300'
+                                : 'text-sky-300'
+                            }`}
+                          >
+                            <span>
+                              {currentMove.quality === 'good'
+                                ? `🔍 내가 둔 수 (${currentMove.san}) 비교 분석`
+                                : `⚠️ 왜 ${currentMove.san} 대신 다른 수가 좋았을까요?`}
+                            </span>
+                          </div>
+                          <p className="text-xs text-zinc-200 leading-relaxed">
+                            {currentMove.whyPlayedSuboptimal}
+                          </p>
+                          {currentMove.playedLineSan &&
+                            currentMove.playedLineSan.length > 0 && (
+                              <div className="text-[11px] font-mono text-zinc-400 bg-zinc-950/50 px-2 py-0.5 rounded border border-zinc-800/80 inline-block">
+                                상대 예상 응수:{' '}
+                                <span className="text-purple-300 font-semibold">
+                                  {currentMove.playedLineSan.join(' → ')}
+                                </span>
+                              </div>
+                            )}
+                        </div>
+                      )}
+
+                      {currentMove.whyBestBetter && (
+                        <div
+                          data-testid="why-best-better"
+                          className="p-2 rounded-lg bg-emerald-950/35 border border-emerald-500/35 space-y-1"
+                        >
+                          <div className="text-[11px] font-extrabold text-emerald-300 flex items-center gap-1">
+                            <span>
+                              💡 최적의 수 ({currentMove.bestMoveSan}) 추천 이유
+                            </span>
+                          </div>
+                          <p className="text-xs text-zinc-200 leading-relaxed">
+                            {currentMove.whyBestBetter}
+                          </p>
+                          {currentMove.bestLineSan &&
+                            currentMove.bestLineSan.length > 0 && (
+                              <div className="text-[11px] font-mono text-zinc-400 bg-zinc-950/50 px-2 py-0.5 rounded border border-zinc-800/80 inline-block">
+                                추천 진행 수순:{' '}
+                                <span className="text-emerald-300 font-semibold">
+                                  {currentMove.bestLineSan.join(' → ')}
+                                </span>
+                              </div>
+                            )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-zinc-300 leading-relaxed bg-zinc-800/60 p-2 rounded-lg">
+                      {currentMove.commentary}
+                    </p>
+                  )}
                 </div>
               </>
             )}

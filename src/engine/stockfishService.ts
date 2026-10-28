@@ -7,10 +7,12 @@ import {
   PlayerStats,
   PieceColor,
 } from '../types/chess';
+import { explainSuboptimalMove } from '../utils/moveExplainer';
 
 interface EvalResult {
   score: number; // centipawns from White's perspective (+ is white advantage, - is black advantage)
   bestMoveUci?: string;
+  pvUci?: string[];
   depth: number;
 }
 
@@ -158,12 +160,13 @@ export class StockfishService {
 
       let latestScore = 0;
       let latestBestMove: string | undefined;
+      let latestPvUci: string[] = [];
       const turnIsWhite = fen.split(' ')[1] === 'w';
 
       return new Promise((resolve) => {
         const timeout = setTimeout(() => {
           cleanup();
-          resolve({ score: latestScore, bestMoveUci: latestBestMove, depth });
+          resolve({ score: latestScore, bestMoveUci: latestBestMove, pvUci: latestPvUci, depth });
         }, 3500);
 
         const listener = (line: string) => {
@@ -183,9 +186,16 @@ export class StockfishService {
           }
 
           if (line.includes(' pv ')) {
-            const match = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
-            if (match) {
-              latestBestMove = match[1];
+            const pvPart = line.split(' pv ')[1];
+            if (pvPart) {
+              const tokens = pvPart
+                .trim()
+                .split(/\s+/)
+                .filter((t) => /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(t));
+              if (tokens.length > 0) {
+                latestBestMove = tokens[0];
+                latestPvUci = tokens.slice(0, 3);
+              }
             }
           }
 
@@ -193,9 +203,12 @@ export class StockfishService {
             const parts = line.split(' ');
             if (parts[1] && parts[1] !== '(none)') {
               latestBestMove = parts[1];
+              if (latestPvUci.length === 0) {
+                latestPvUci = [parts[1]];
+              }
             }
             cleanup();
-            resolve({ score: latestScore, bestMoveUci: latestBestMove, depth });
+            resolve({ score: latestScore, bestMoveUci: latestBestMove, pvUci: latestPvUci, depth });
           }
         };
 
@@ -348,6 +361,42 @@ export class StockfishService {
         commentary = `💡 놓친 체크 기회: ${checkAlternativeSan || '체크 수'}로 상대 킹을 위협할 수 있었습니다!`;
       }
 
+      let whyPlayedSuboptimal: string | undefined;
+      let whyBestBetter: string | undefined;
+      let playedLineSan: string[] | undefined;
+      let bestLineSan: string[] | undefined;
+      let oppBestReplyUci: string | undefined;
+
+      if (
+        quality !== 'best' &&
+        evalBefore.bestMoveUci &&
+        bestMoveSan &&
+        bestMoveSan !== m.san
+      ) {
+        const explained = explainSuboptimalMove({
+          fenBefore: m.fenBefore,
+          fenAfter: m.fenAfter,
+          ply: m.ply,
+          moveNumber: m.moveNumber,
+          color: m.color,
+          san: m.san,
+          from: m.from,
+          to: m.to,
+          promotion: m.promotion,
+          bestMoveUci: evalBefore.bestMoveUci,
+          bestPvUci: evalBefore.pvUci,
+          oppReplyPvUci: evalAfter.pvUci || (evalAfter.bestMoveUci ? [evalAfter.bestMoveUci] : []),
+          playerEvalBefore,
+          playerEvalAfter,
+          quality,
+        });
+        whyPlayedSuboptimal = explained.whyPlayedSuboptimal;
+        whyBestBetter = explained.whyBestBetter;
+        playedLineSan = explained.playedLineSan;
+        bestLineSan = explained.bestLineSan;
+        oppBestReplyUci = explained.oppBestReplyUci;
+      }
+
       analysisResults.push({
         ply: m.ply,
         moveNumber: m.moveNumber,
@@ -364,6 +413,12 @@ export class StockfishService {
         quality,
         bestMoveSan,
         bestMoveUci: evalBefore.bestMoveUci,
+        oppBestReplyUci,
+        evalBestScore: evalBefore.score,
+        whyPlayedSuboptimal,
+        whyBestBetter,
+        playedLineSan,
+        bestLineSan,
         missedCheck,
         commentary,
       });
