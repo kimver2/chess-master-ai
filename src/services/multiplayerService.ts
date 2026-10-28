@@ -11,6 +11,7 @@ import {
   getDocs,
   limit,
   arrayUnion,
+  Timestamp,
 } from 'firebase/firestore';
 import { getDb } from './firebaseService';
 import {
@@ -23,6 +24,26 @@ import { PieceColor, GameOverReason, TimeLimit } from '../types/chess';
 
 const GAMES_COLLECTION = 'multiplayer_games';
 const QUEUE_COLLECTION = 'matchmaking_queue';
+
+// 24-hour TTL (Time To Live) for Firestore documents
+const TTL_DURATION_MS = 24 * 60 * 60 * 1000;
+
+export function getTtlTimestamp(durationMs: number = TTL_DURATION_MS): Timestamp {
+  return Timestamp.fromMillis(Date.now() + durationMs);
+}
+
+/**
+ * Delete a game room from Firestore (e.g. host cancelled waiting room)
+ */
+export async function deleteGameRoom(gameId: string): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+  try {
+    await deleteDoc(doc(db, GAMES_COLLECTION, gameId));
+  } catch (err) {
+    console.warn('Failed to delete game room:', err);
+  }
+}
 
 export function generateRoomCode(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -77,6 +98,7 @@ export async function createFriendRoom(
     nextGameId: null,
     createdAt: nowIso,
     updatedAt: nowIso,
+    expireAt: getTtlTimestamp(),
   };
 
   await setDoc(gameRef, initialGame);
@@ -211,6 +233,7 @@ export function startQuickMatch(
           nextGameId: null,
           createdAt: nowIso,
           updatedAt: nowIso,
+          expireAt: getTtlTimestamp(),
         };
 
         await setDoc(gameRef, newGame);
@@ -347,6 +370,7 @@ export async function makeMultiplayerMove(
     updateData.status = 'completed';
     updateData.winner = winner;
     updateData.endReason = endReason;
+    updateData.expireAt = getTtlTimestamp();
   }
 
   await updateDoc(gameDocRef, updateData);
@@ -369,6 +393,7 @@ export async function resignMultiplayerGame(
     endReason: 'resignation',
     drawOfferBy: null,
     updatedAt: new Date().toISOString(),
+    expireAt: getTtlTimestamp(),
   });
 }
 
@@ -397,6 +422,7 @@ export async function claimMultiplayerTimeout(
     blackTimeMs: loserColor === 'b' ? 0 : data.blackTimeMs ?? null,
     drawOfferBy: null,
     updatedAt: new Date().toISOString(),
+    expireAt: getTtlTimestamp(),
   });
 }
 
@@ -434,6 +460,7 @@ export async function respondMultiplayerDraw(
       endReason: 'draw_agreement',
       drawOfferBy: null,
       updatedAt: nowIso,
+      expireAt: getTtlTimestamp(),
     });
   } else {
     await updateDoc(doc(db, GAMES_COLLECTION, gameId), {
@@ -494,6 +521,7 @@ export async function requestMultiplayerRematch(
       nextGameId: null,
       createdAt: nowIso,
       updatedAt: nowIso,
+      expireAt: getTtlTimestamp(),
     };
 
     await setDoc(newGameRef, rematchGame);

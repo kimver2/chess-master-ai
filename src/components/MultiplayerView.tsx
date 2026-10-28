@@ -51,6 +51,7 @@ import {
   markPlayerLeftPostGame,
   sendMultiplayerReaction,
   getInitialClockMs,
+  deleteGameRoom,
 } from '../services/multiplayerService';
 import {
   recordPvpGameResult,
@@ -188,6 +189,10 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
   const unsubscribeGameRef = useRef<(() => void) | null>(null);
   const recordedGameIdsRef = useRef<Set<string>>(new Set());
   const timeoutClaimedRef = useRef<string | null>(null);
+  const activeGameIdRef = useRef<string | null>(null);
+  activeGameIdRef.current = activeGameId;
+  const gameStatusRef = useRef<string | null>(null);
+  gameStatusRef.current = gameData?.status || null;
 
   // Convert UserProfile to MultiplayerPlayer format
   const playerInfo: MultiplayerPlayer = useMemo(
@@ -201,12 +206,15 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     [currentUser]
   );
 
-  // Clean up listeners on unmount
+  // Clean up listeners and purge unstarted waiting room on unmount
   useEffect(() => {
     return () => {
       if (cleanupMatchmakingRef.current) cleanupMatchmakingRef.current();
       if (unsubscribeGameRef.current) unsubscribeGameRef.current();
       if (onActivePvpBoardChange) onActivePvpBoardChange(null);
+      if (activeGameIdRef.current && (!gameStatusRef.current || gameStatusRef.current === 'waiting')) {
+        deleteGameRoom(activeGameIdRef.current).catch(console.warn);
+      }
     };
   }, []);
 
@@ -881,6 +889,10 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
 
   // Exit Game back to Lobby
   const handleExitGame = () => {
+    // If exiting while room is waiting (friend match not started), delete the room immediately from Firestore
+    if (!isLocalMode && activeGameId && (!gameData || gameData.status === 'waiting')) {
+      deleteGameRoom(activeGameId).catch(console.warn);
+    }
     if (!isLocalMode && activeGameId && myOnlineColor && gameData?.status === 'completed') {
       markPlayerLeftPostGame(activeGameId, myOnlineColor).catch(console.warn);
       if (onWatchRematchGame) {
@@ -942,7 +954,12 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
 
           {onBackToPlay && (
             <button
-              onClick={onBackToPlay}
+              onClick={() => {
+                if (!isLocalMode && activeGameId && (!gameData || gameData.status === 'waiting')) {
+                  deleteGameRoom(activeGameId).catch(console.warn);
+                }
+                onBackToPlay();
+              }}
               className="px-2.5 py-1.5 rounded-xl bg-zinc-850 hover:bg-zinc-800 text-zinc-300 text-xs font-semibold border border-zinc-750 flex items-center gap-1 transition-all shrink-0"
             >
               <ArrowLeft className="w-3.5 h-3.5" />

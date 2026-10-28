@@ -57,6 +57,7 @@ export interface MultiplayerGameData {
   leftRoomBy?: PieceColor[];
   nextGameId?: string | null;
   lastReaction?: MultiplayerReaction | null;
+  expireAt?: any; // Firestore Timestamp for automatic TTL deletion
   createdAt: string;
   updatedAt: string;
 }
