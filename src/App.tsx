@@ -850,9 +850,18 @@ export const App: React.FC = () => {
     setIsAiThinking(true);
     const movingAiColor: PieceColor = currentChess.turn();
     const fenBefore = currentChess.fen();
+    const thinkStartTime = Date.now();
 
     try {
       const best = await stockfishService.getBestMove(fenBefore, aiLevel);
+      if (gameSessionRef.current !== session) return;
+
+      // AI가 너무 즉시 두지 않고 2초간 자연스럽게 수를 생각하도록 딜레이 적용
+      const elapsed = Date.now() - thinkStartTime;
+      const targetDelayMs = 2000; // 2초
+      if (elapsed < targetDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, targetDelayMs - elapsed));
+      }
       if (gameSessionRef.current !== session) return;
 
       if (best) {
