@@ -70,7 +70,12 @@ import {
   buildStandardPgn,
   AI_NAMES,
 } from './services/storageService';
-import { submitOnlineScore } from './services/firebaseService';
+import { submitOnlineScore, syncUserProfileToOnlineRankings } from './services/firebaseService';
+import {
+  subscribeToGame,
+  requestMultiplayerRematch,
+  declineMultiplayerRematch,
+} from './services/multiplayerService';
 
 const getPositionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
 
@@ -283,6 +288,15 @@ export const App: React.FC = () => {
   const [gameArchives, setGameArchives] = useState<ArchivedGame[]>(() => loadGameArchive());
   const [reviewPlayerColor, setReviewPlayerColor] = useState<PieceColor>('w');
   const [resumedBannerMessage, setResumedBannerMessage] = useState<string | null>(null);
+  const [watchedRematchInfo, setWatchedRematchInfo] = useState<{
+    gameId: string;
+    myColor: PieceColor;
+    opponentName: string;
+  } | null>(null);
+  const [activePvpBoardGameId, setActivePvpBoardGameId] = useState<string | null>(null);
+  const [incomingGlobalRematch, setIncomingGlobalRematch] = useState<boolean>(false);
+  const [externalJoinGameId, setExternalJoinGameId] = useState<string | null>(null);
+  const handleConsumeExternalJoin = React.useCallback(() => setExternalJoinGameId(null), []);
   const [pendingConfirmAction, setPendingConfirmAction] = useState<{
     type: 'resign' | 'new_game';
     nextSettings?: { diff: DifficultyLevel; time: TimeLimit; side: PlayerSide };
@@ -294,6 +308,59 @@ export const App: React.FC = () => {
     isBestTime: boolean;
   } | null>(null);
   const gameStartTimeRef = React.useRef<number>(Date.now());
+
+  // Global background watcher for 1:1 Rematch when player moved to Lobby or another tab
+  const isAwayFromWatchedBoard =
+    !!watchedRematchInfo &&
+    (activeTab !== 'pvp' || activePvpBoardGameId !== watchedRematchInfo.gameId);
+
+  useEffect(() => {
+    if (!watchedRematchInfo || !isAwayFromWatchedBoard) {
+      setIncomingGlobalRematch(false);
+      return;
+    }
+
+    const unsub = subscribeToGame(watchedRematchInfo.gameId, (updated) => {
+      // If rematch game was created (e.g. opponent accepted our earlier rematch request while we were in lobby), auto-join!
+      if (updated.nextGameId && updated.nextGameId !== watchedRematchInfo.gameId) {
+        setIncomingGlobalRematch(false);
+        setWatchedRematchInfo(null);
+        setExternalJoinGameId(updated.nextGameId);
+        setActiveTab('pvp');
+        return;
+      }
+
+      if (updated.rematchOfferBy && updated.rematchOfferBy !== watchedRematchInfo.myColor) {
+        setIncomingGlobalRematch((prev) => {
+          if (!prev) soundManager.check();
+          return true;
+        });
+      } else {
+        setIncomingGlobalRematch(false);
+      }
+    });
+
+    return () => unsub();
+  }, [watchedRematchInfo, isAwayFromWatchedBoard]);
+
+  const handleAcceptGlobalRematch = async () => {
+    if (!watchedRematchInfo) return;
+    const { gameId, myColor } = watchedRematchInfo;
+    setIncomingGlobalRematch(false);
+    setWatchedRematchInfo(null);
+    const newId = await requestMultiplayerRematch(gameId, myColor);
+    if (newId) {
+      setExternalJoinGameId(newId);
+      setActiveTab('pvp');
+    }
+  };
+
+  const handleDeclineGlobalRematch = async () => {
+    if (!watchedRematchInfo) return;
+    const { gameId, myColor } = watchedRematchInfo;
+    setIncomingGlobalRematch(false);
+    await declineMultiplayerRematch(gameId, myColor);
+  };
 
   // Auto-launch tour guide for first-time visitors
   useEffect(() => {
@@ -311,9 +378,10 @@ export const App: React.FC = () => {
   // App Exit Confirmation State (on Android Back Button)
   const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
 
-  // Init Stockfish engine & auto-resume ongoing game on launch
+  // Init Stockfish engine, sync online profile nickname, & auto-resume ongoing game on launch
   useEffect(() => {
     stockfishService.init().catch(console.error);
+    syncUserProfileToOnlineRankings(userProfile).catch(console.warn);
 
     const saved = loadActiveGame();
     if (saved && saved.playedMoves.length > 0) {
@@ -1428,6 +1496,39 @@ export const App: React.FC = () => {
         </div>
       </header>
 
+      {/* Global Real-time 1:1 Rematch Invite Banner (when in Lobby or another tab) */}
+      {incomingGlobalRematch && watchedRematchInfo && isAwayFromWatchedBoard && (
+        <div
+          data-testid="global-rematch-invite-banner"
+          className="mx-2.5 mt-2 px-3 py-2 rounded-xl bg-amber-950/90 border border-amber-500/70 shadow-lg flex items-center justify-between gap-2 text-xs text-amber-100 shrink-0 animate-in fade-in"
+        >
+          <div className="flex items-center gap-1.5 min-w-0 font-bold">
+            <span className="shrink-0">⚡</span>
+            <span className="truncate">
+              <strong className="text-amber-300">{watchedRematchInfo.opponentName}</strong>님이 재대결을 신청했습니다!
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              data-testid="accept-global-rematch-btn"
+              onClick={handleAcceptGlobalRematch}
+              className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-[11px]"
+            >
+              수락
+            </button>
+            <button
+              type="button"
+              data-testid="decline-global-rematch-btn"
+              onClick={handleDeclineGlobalRematch}
+              className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-[11px]"
+            >
+              거절
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Tab Content */}
       <main className="flex-1 flex flex-col overflow-y-auto">
         {activeTab === 'play' ? (
@@ -1791,28 +1892,20 @@ export const App: React.FC = () => {
             {/* Action Bar (In-Game vs Post-Game Board Viewing) */}
             <div data-tour="action-controls" className="w-full shrink-0">
               {isGameOver && !showGameOverModal ? (
-                <div className="flex items-center gap-2 pt-0.5">
+                <div className="grid grid-cols-2 gap-2 pt-0.5">
                   <button
                     type="button"
                     onClick={() => setShowGameOverModal(true)}
-                    className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-98 text-zinc-950 text-xs font-black flex items-center justify-center gap-1.5 shadow-md shadow-amber-950/40 transition-all"
+                    className="py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-98 text-zinc-950 text-xs font-black flex items-center justify-center gap-1.5 shadow-md shadow-amber-950/40 transition-all"
                   >
-                    <Trophy className="w-4 h-4" /> 결과 팝업 열기
-                  </button>
-                  <button
-                    type="button"
-                    onClick={runGameReview}
-                    disabled={isAnalyzing}
-                    className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/40 transition-all"
-                  >
-                    <TrendingUp className="w-4 h-4" /> 복기하기
+                    <Trophy className="w-4 h-4" /> 대국 결과 보기
                   </button>
                   <button
                     type="button"
                     onClick={() => startNewGame()}
-                    className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-semibold border border-zinc-800 active:scale-98 transition-all"
+                    className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 text-xs font-bold border border-zinc-800 flex items-center justify-center gap-1.5 active:scale-98 transition-all"
                   >
-                    새 대국
+                    <Play className="w-3.5 h-3.5 fill-zinc-200" /> 새 대국 시작
                   </button>
                 </div>
               ) : (
@@ -1873,15 +1966,16 @@ export const App: React.FC = () => {
               )}
             </div>
 
-            {/* Review Button when moves exist */}
+            {/* Single Unified Review Button when moves exist */}
             {playedMoves.length > 0 && (
               <button
+                data-testid="main-review-btn"
                 onClick={runGameReview}
                 disabled={isAnalyzing}
                 className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-99 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 shrink-0"
               >
                 <TrendingUp className="w-4 h-4" />
-                {isGameOver ? '대국 복기 및 좋은 수/실수 분석하기' : '현재까지의 대국 복기하기'}
+                {isGameOver ? '대국 정밀 복기하기 (형세·실수 분석)' : '현재까지의 대국 복기하기'}
               </button>
             )}
           </div>
@@ -1895,6 +1989,10 @@ export const App: React.FC = () => {
               onProfileUpdated={setUserProfile}
               onArchiveSaved={() => setGameArchives(loadGameArchive())}
               onAnalyzeMoves={(moves, myColor) => runMovesReview(moves, myColor)}
+              externalJoinGameId={externalJoinGameId}
+              onConsumeExternalJoin={handleConsumeExternalJoin}
+              onWatchRematchGame={setWatchedRematchInfo}
+              onActivePvpBoardChange={setActivePvpBoardGameId}
             />
           </div>
         ) : activeTab === 'puzzle' ? (

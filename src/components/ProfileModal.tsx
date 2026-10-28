@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { UserProfile, AvatarType, AvatarColor, getTier, TIERS } from '../types/profile';
 import { saveUserProfile, AI_NAMES, AI_RATINGS, ALL_AI_LEVELS } from '../services/storageService';
+import { syncUserProfileToOnlineRankings } from '../services/firebaseService';
 import { AvatarIcon } from './AvatarIcon';
 
 interface ProfileModalProps {
@@ -92,6 +93,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     };
     onUpdateProfile(updated);
     saveUserProfile(updated);
+    syncUserProfileToOnlineRankings(updated).catch(console.warn);
     setIsEditingName(false);
   };
 
@@ -105,6 +107,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     };
     onUpdateProfile(updated);
     saveUserProfile(updated);
+    syncUserProfileToOnlineRankings(updated).catch(console.warn);
   };
 
   const conqueredCount = ALL_AI_LEVELS.filter((lvl) => profile.levelRecords[lvl]?.conquered).length;

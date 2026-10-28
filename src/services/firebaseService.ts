@@ -5,13 +5,15 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
+  deleteDoc,
   query,
   where,
   limit,
   getDocs,
   Firestore,
 } from 'firebase/firestore';
-import { LeaderboardEntry } from '../types/profile';
+import { LeaderboardEntry, UserProfile } from '../types/profile';
 
 export interface FirebaseConfig {
   apiKey: string;
@@ -211,5 +213,97 @@ export async function fetchOnlineLeaderboard(
   } catch (err) {
     console.error('Error fetching online leaderboard:', err);
     return [];
+  }
+}
+
+/**
+ * Synchronize user's current nickname, avatar, avatarColor, and rating across ALL their online ranking records (Lv.1 ~ Lv.10),
+ * and consolidate any legacy duplicate documents per AI level into deterministic `{userId}_lvl_{aiLevel}` docs.
+ */
+export async function syncUserProfileToOnlineRankings(profile: UserProfile): Promise<number> {
+  const db = getDb();
+  if (!db || !profile.id) return 0;
+
+  try {
+    const colRef = collection(db, 'rankings');
+    const q = query(colRef, where('userId', '==', profile.id));
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) return 0;
+
+    // Group documents by aiLevel so legacy random-ID docs also get consolidated cleanly
+    const byLevel = new Map<number, Array<{ id: string; data: Record<string, any> }>>();
+    snapshot.forEach((d) => {
+      const data = d.data();
+      const lvl = Number(data.aiLevel);
+      if (lvl >= 1 && lvl <= 10) {
+        const arr = byLevel.get(lvl) || [];
+        arr.push({ id: d.id, data });
+        byLevel.set(lvl, arr);
+      }
+    });
+
+    let updatedCount = 0;
+    const nowIso = new Date().toISOString();
+
+    for (const [lvl, docsForLevel] of byLevel.entries()) {
+      // Pick strictly best record among all docs for this level
+      docsForLevel.sort((a, b) => {
+        if (a.data.moves !== b.data.moves) return a.data.moves - b.data.moves;
+        return a.data.timeSec - b.data.timeSec;
+      });
+      const best = docsForLevel[0];
+      const canonicalId = `${profile.id}_lvl_${lvl}`;
+      const canonicalDoc = docsForLevel.find((d) => d.id === canonicalId);
+
+      const needsCanonicalWrite =
+        !canonicalDoc ||
+        canonicalDoc.data.nickname !== profile.nickname ||
+        canonicalDoc.data.avatar !== profile.avatar ||
+        canonicalDoc.data.avatarColor !== profile.avatarColor ||
+        canonicalDoc.data.rating !== profile.rating ||
+        canonicalDoc.data.moves !== best.data.moves ||
+        canonicalDoc.data.timeSec !== best.data.timeSec;
+
+      if (needsCanonicalWrite) {
+        if (canonicalDoc) {
+          await updateDoc(doc(db, 'rankings', canonicalId), {
+            nickname: profile.nickname,
+            avatar: profile.avatar,
+            avatarColor: profile.avatarColor,
+            rating: profile.rating,
+            moves: best.data.moves,
+            timeSec: best.data.timeSec,
+            date: best.data.date || nowIso.substring(0, 10),
+            updatedAt: nowIso,
+          });
+        } else {
+          await setDoc(doc(db, 'rankings', canonicalId), {
+            userId: profile.id,
+            nickname: profile.nickname,
+            avatar: profile.avatar,
+            avatarColor: profile.avatarColor,
+            rating: profile.rating,
+            aiLevel: lvl,
+            moves: best.data.moves,
+            timeSec: best.data.timeSec,
+            date: best.data.date || nowIso.substring(0, 10),
+            updatedAt: nowIso,
+          });
+        }
+        updatedCount++;
+      }
+
+      // Delete any legacy non-canonical duplicate documents for this user & level
+      for (const item of docsForLevel) {
+        if (item.id !== canonicalId) {
+          await deleteDoc(doc(db, 'rankings', item.id));
+        }
+      }
+    }
+
+    return updatedCount;
+  } catch (err) {
+    console.warn('Failed to sync user profile to online rankings:', err);
+    return 0;
   }
 }

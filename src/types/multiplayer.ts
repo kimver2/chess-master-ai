@@ -45,6 +45,8 @@ export interface MultiplayerGameData {
   turnStartedAt?: string;
   drawOfferBy?: PieceColor | null;
   rematchOfferBy?: PieceColor | null;
+  rematchDeclinedBy?: PieceColor | null;
+  leftRoomBy?: PieceColor[];
   nextGameId?: string | null;
   createdAt: string;
   updatedAt: string;

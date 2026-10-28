@@ -44,6 +44,8 @@ import {
   offerMultiplayerDraw,
   respondMultiplayerDraw,
   requestMultiplayerRematch,
+  declineMultiplayerRematch,
+  markPlayerLeftPostGame,
   getInitialClockMs,
 } from '../services/multiplayerService';
 import {
@@ -62,6 +64,12 @@ interface MultiplayerViewProps {
   onProfileUpdated?: (updated: UserProfile) => void;
   onArchiveSaved?: () => void;
   onAnalyzeMoves?: (moves: PlayedMoveRecord[], myColor: PieceColor) => void;
+  externalJoinGameId?: string | null;
+  onConsumeExternalJoin?: () => void;
+  onWatchRematchGame?: (
+    info: { gameId: string; myColor: PieceColor; opponentName: string } | null
+  ) => void;
+  onActivePvpBoardChange?: (gameId: string | null) => void;
 }
 
 function reconstructMoveRecords(mpMoves: MultiplayerMove[]): PlayedMoveRecord[] {
@@ -110,6 +118,10 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
   onProfileUpdated,
   onArchiveSaved,
   onAnalyzeMoves,
+  externalJoinGameId,
+  onConsumeExternalJoin,
+  onWatchRematchGame,
+  onActivePvpBoardChange,
 }) => {
   // Navigation & Sub-views: 'lobby' | 'creating_room' | 'joining_room' | 'matching' | 'in_game'
   const [viewState, setViewState] = useState<
@@ -167,8 +179,33 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     return () => {
       if (cleanupMatchmakingRef.current) cleanupMatchmakingRef.current();
       if (unsubscribeGameRef.current) unsubscribeGameRef.current();
+      if (onActivePvpBoardChange) onActivePvpBoardChange(null);
     };
   }, []);
+
+  // Report whether user is currently viewing an active/post-game online PVP board
+  useEffect(() => {
+    if (!onActivePvpBoardChange) return;
+    if (!isLocalMode && viewState === 'in_game' && activeGameId) {
+      onActivePvpBoardChange(activeGameId);
+    } else {
+      onActivePvpBoardChange(null);
+    }
+  }, [isLocalMode, viewState, activeGameId, onActivePvpBoardChange]);
+
+  // Accept external rematch transition triggered from global notification banner
+  useEffect(() => {
+    if (!externalJoinGameId) return;
+    if (cleanupMatchmakingRef.current) cleanupMatchmakingRef.current();
+    if (unsubscribeGameRef.current) unsubscribeGameRef.current();
+    setIsLocalMode(false);
+    setOnlineRatingDelta(null);
+    timeoutClaimedRef.current = null;
+    setActiveGameId(externalJoinGameId);
+    setViewState('in_game');
+    soundManager.gameStart();
+    if (onConsumeExternalJoin) onConsumeExternalJoin();
+  }, [externalJoinGameId, onConsumeExternalJoin]);
 
   // Determine player's color in the online game
   const myOnlineColor: PieceColor | null = useMemo(() => {
@@ -189,6 +226,7 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
         if (updatedGame.nextGameId && updatedGame.nextGameId !== activeGameId) {
           setOnlineRatingDelta(null);
           timeoutClaimedRef.current = null;
+          if (onWatchRematchGame) onWatchRematchGame(null);
           setActiveGameId(updatedGame.nextGameId);
           soundManager.gameStart();
           return;
@@ -287,6 +325,13 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
       moves: moveRecords,
     });
     if (onArchiveSaved) onArchiveSaved();
+    if (onWatchRematchGame) {
+      onWatchRematchGame({
+        gameId: gameData.id,
+        myColor: myOnlineColor,
+        opponentName: opp?.nickname || '온라인 상대',
+      });
+    }
   }, [gameData, isLocalMode, myOnlineColor]);
 
   // Online Live Clock Ticker & Timeout Detector
@@ -409,6 +454,7 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
   const handleCreateFriendRoom = async (side: 'white' | 'black' | 'random' = 'random') => {
     setErrorMessage(null);
     setOnlineRatingDelta(null);
+    if (onWatchRematchGame) onWatchRematchGame(null);
     setViewState('creating_room');
     try {
       const { gameId, roomCode } = await createFriendRoom(playerInfo, side, selectedTimeLimit);
@@ -428,6 +474,7 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     }
     setErrorMessage(null);
     setOnlineRatingDelta(null);
+    if (onWatchRematchGame) onWatchRematchGame(null);
     try {
       const res = await joinFriendRoom(joinCodeInput.trim(), playerInfo);
       if (res.success && res.gameId) {
@@ -446,6 +493,7 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
   const handleStartQuickMatch = () => {
     setErrorMessage(null);
     setOnlineRatingDelta(null);
+    if (onWatchRematchGame) onWatchRematchGame(null);
     setViewState('matching');
 
     const cancelFn = startQuickMatch(
@@ -475,6 +523,7 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
 
   // 4. Start Pass & Play (Local 2-Player on same device)
   const handleStartPassAndPlay = () => {
+    if (onWatchRematchGame) onWatchRematchGame(null);
     const initialMs = getInitialClockMs(selectedTimeLimit);
     setIsLocalMode(true);
     setLocalChess(new Chess());
@@ -702,9 +751,16 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     if (newId) {
       setOnlineRatingDelta(null);
       timeoutClaimedRef.current = null;
+      if (onWatchRematchGame) onWatchRematchGame(null);
       setActiveGameId(newId);
       soundManager.gameStart();
     }
+  };
+
+  // Decline Incoming Rematch Offer
+  const handleDeclineRematch = async () => {
+    if (isLocalMode || !activeGameId || !myOnlineColor) return;
+    await declineMultiplayerRematch(activeGameId, myOnlineColor);
   };
 
   // Trigger Post-Game Review
@@ -730,6 +786,17 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
 
   // Exit Game back to Lobby
   const handleExitGame = () => {
+    if (!isLocalMode && activeGameId && myOnlineColor && gameData?.status === 'completed') {
+      markPlayerLeftPostGame(activeGameId, myOnlineColor).catch(console.warn);
+      if (onWatchRematchGame) {
+        const opp = myOnlineColor === 'w' ? gameData.blackPlayer : gameData.whitePlayer;
+        onWatchRematchGame({
+          gameId: activeGameId,
+          myColor: myOnlineColor,
+          opponentName: opp?.nickname || '온라인 상대',
+        });
+      }
+    }
     if (cleanupMatchmakingRef.current) cleanupMatchmakingRef.current();
     if (unsubscribeGameRef.current) unsubscribeGameRef.current();
     setActiveGameId(null);
@@ -1088,6 +1155,12 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     gameData?.drawOfferBy &&
     gameData.drawOfferBy === myOnlineColor;
 
+  const opponentOnlineColor: PieceColor | null = myOnlineColor
+    ? myOnlineColor === 'w'
+      ? 'b'
+      : 'w'
+    : null;
+
   const incomingRematchOffer =
     !isLocalMode &&
     isGameOver &&
@@ -1099,6 +1172,18 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     isGameOver &&
     gameData?.rematchOfferBy &&
     gameData.rematchOfferBy === myOnlineColor;
+
+  const opponentLeftPostGame =
+    !isLocalMode &&
+    isGameOver &&
+    !!opponentOnlineColor &&
+    Boolean(gameData?.leftRoomBy?.includes(opponentOnlineColor));
+
+  const opponentDeclinedRematch =
+    !isLocalMode &&
+    isGameOver &&
+    !!opponentOnlineColor &&
+    gameData?.rematchDeclinedBy === opponentOnlineColor;
 
   const totalMoveCount = isLocalMode ? localMoves.length : gameData?.moves.length || 0;
 
@@ -1242,23 +1327,53 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
                 {incomingRematchOffer && ' · ⚡ 상대가 재대결을 요청했습니다!'}
               </div>
 
-              <div className="grid grid-cols-2 gap-1.5 pt-0.5">
-                <button
-                  type="button"
-                  data-testid="pvp-rematch-btn"
-                  disabled={!!myPendingRematchOffer}
-                  onClick={handleRematch}
-                  className="py-2 px-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-zinc-950 text-[11px] font-black flex items-center justify-center gap-1"
+              {!incomingRematchOffer && opponentDeclinedRematch && (
+                <div
+                  data-testid="pvp-rematch-declined-msg"
+                  className="text-[11px] font-bold text-rose-300 bg-rose-950/60 border border-rose-500/40 rounded-lg py-1 px-2"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>
-                    {myPendingRematchOffer
-                      ? '수락 대기 중...'
-                      : incomingRematchOffer
-                      ? '재대결 수락!'
-                      : '재대결 신청'}
-                  </span>
-                </button>
+                  상대방이 재대결 요청을 거절했습니다.
+                </div>
+              )}
+
+              {!incomingRematchOffer && !opponentDeclinedRematch && opponentLeftPostGame && (
+                <div
+                  data-testid="pvp-opponent-left-msg"
+                  className="text-[10px] font-semibold text-amber-200/90 bg-amber-950/50 border border-amber-500/30 rounded-lg py-1 px-2"
+                >
+                  💡 상대방이 로비로 이동했습니다 (재대결 신청 시 상대에게 실시간 알림이 전송됩니다)
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    data-testid="pvp-rematch-btn"
+                    disabled={!!myPendingRematchOffer}
+                    onClick={handleRematch}
+                    className="flex-1 py-2 px-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-zinc-950 text-[11px] font-black flex items-center justify-center gap-1"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">
+                      {myPendingRematchOffer
+                        ? '수락 대기 중...'
+                        : incomingRematchOffer
+                        ? '재대결 수락!'
+                        : '재대결 신청'}
+                    </span>
+                  </button>
+                  {incomingRematchOffer && (
+                    <button
+                      type="button"
+                      data-testid="pvp-rematch-decline-btn"
+                      onClick={handleDeclineRematch}
+                      className="py-2 px-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-bold border border-zinc-700 shrink-0"
+                    >
+                      거절
+                    </button>
+                  )}
+                </div>
 
                 {onAnalyzeMoves && totalMoveCount > 0 ? (
                   <button

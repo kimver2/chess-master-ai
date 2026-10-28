@@ -1,4 +1,4 @@
-import { UserProfile, LevelRecord, LeaderboardEntry, AvatarType, AvatarColor } from '../types/profile';
+import { UserProfile, LevelRecord } from '../types/profile';
 import { SavedActiveGame, ArchivedGame, PlayedMoveRecord } from '../types/chess';
 
 const PROFILE_STORAGE_KEY = 'chess_user_profile_v1';
@@ -245,106 +245,6 @@ export function recordPvpGameResult(
 
   saveUserProfile(profile);
   return { profile, ratingDelta };
-}
-
-/**
- * Generate simulated local / mock bot ladder for display when offline or before Firebase connection
- */
-export function getLocalLadder(aiLevel: number, currentUser: UserProfile): LeaderboardEntry[] {
-  const userRec = currentUser.levelRecords[aiLevel];
-  const list: LeaderboardEntry[] = [];
-
-  // Simulated rankers across Lv.1 ~ Lv.10
-  const botsByLevel: Record<number, Array<{ name: string; moves: number; time: number; rating: number }>> = {
-    1: [
-      { name: '속기마스터_준', moves: 6, time: 24, rating: 1420 },
-      { name: '체스초보탈출', moves: 8, time: 38, rating: 1250 },
-      { name: '폰의반란', moves: 11, time: 45, rating: 1180 },
-      { name: '루키플레이어', moves: 14, time: 62, rating: 1050 },
-    ],
-    2: [
-      { name: '스탠다드오프닝', moves: 9, time: 42, rating: 1540 },
-      { name: '나이트포크장인', moves: 12, time: 55, rating: 1390 },
-      { name: '체스사랑', moves: 16, time: 78, rating: 1280 },
-    ],
-    3: [
-      { name: '퀸스갬빗연구가', moves: 14, time: 65, rating: 1720 },
-      { name: '엔드게임도사', moves: 18, time: 92, rating: 1610 },
-      { name: '비숍사냥꾼', moves: 22, time: 110, rating: 1530 },
-    ],
-    4: [
-      { name: '스칸디나비안', moves: 18, time: 88, rating: 1910 },
-      { name: '전술의달인', moves: 24, time: 135, rating: 1840 },
-      { name: '카스파로프팬', moves: 28, time: 160, rating: 1760 },
-    ],
-    5: [
-      { name: '마스터K', moves: 22, time: 112, rating: 2050 },
-      { name: '디펜스마스터', moves: 27, time: 154, rating: 1980 },
-      { name: '체스그랜드', moves: 34, time: 198, rating: 1920 },
-    ],
-    6: [
-      { name: '딥블루_챌린저', moves: 26, time: 140, rating: 2280 },
-      { name: '피셔의후예', moves: 31, time: 185, rating: 2210 },
-    ],
-    7: [
-      { name: '알레킨의기백', moves: 30, time: 175, rating: 2480 },
-      { name: '탈의마술사', moves: 36, time: 215, rating: 2410 },
-    ],
-    8: [
-      { name: '칼슨매니아', moves: 34, time: 220, rating: 2680 },
-      { name: '카루아나정석', moves: 40, time: 265, rating: 2610 },
-    ],
-    9: [
-      { name: '슈퍼GM_하늘', moves: 38, time: 255, rating: 2860 },
-      { name: '나카무라속기', moves: 44, time: 295, rating: 2810 },
-    ],
-    10: [
-      { name: '알파제로러버', moves: 42, time: 290, rating: 3080 },
-      { name: '스톡피쉬슬레이어', moves: 48, time: 340, rating: 3020 },
-    ],
-  };
-
-  const pool = botsByLevel[aiLevel] || [];
-  pool.forEach((item, idx) => {
-    list.push({
-      id: `bot_${aiLevel}_${idx}`,
-      userId: `bot_${idx}`,
-      nickname: item.name,
-      avatar: (['queen', 'king', 'knight', 'rook'][idx % 4]) as AvatarType,
-      avatarColor: (['amber', 'emerald', 'blue', 'purple'][idx % 4]) as AvatarColor,
-      rating: item.rating,
-      aiLevel,
-      moves: item.moves,
-      timeSec: item.time,
-      date: '2026-10-25',
-      isCurrentUser: false,
-    });
-  });
-
-  // If user has conquered this level, insert user into leaderboard!
-  if (userRec && userRec.conquered && userRec.bestMoves) {
-    list.push({
-      id: `user_${currentUser.id}_lvl_${aiLevel}`,
-      userId: currentUser.id,
-      nickname: currentUser.nickname,
-      avatar: currentUser.avatar,
-      avatarColor: currentUser.avatarColor,
-      rating: currentUser.rating,
-      aiLevel,
-      moves: userRec.bestMoves,
-      timeSec: userRec.bestTimeSec || 60,
-      date: userRec.lastWonAt ? userRec.lastWonAt.substring(0, 10) : '오늘',
-      isCurrentUser: true,
-    });
-  }
-
-  // Sort by fewest moves, then fastest time
-  list.sort((a, b) => {
-    if (a.moves !== b.moves) return a.moves - b.moves;
-    return a.timeSec - b.timeSec;
-  });
-
-  return list;
 }
 
 // ==========================================

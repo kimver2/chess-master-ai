@@ -10,6 +10,7 @@ import {
   where,
   getDocs,
   limit,
+  arrayUnion,
 } from 'firebase/firestore';
 import { getDb } from './firebaseService';
 import {
@@ -487,6 +488,8 @@ export async function requestMultiplayerRematch(
       turnStartedAt: nowIso,
       drawOfferBy: null,
       rematchOfferBy: null,
+      rematchDeclinedBy: null,
+      leftRoomBy: [],
       nextGameId: null,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -496,16 +499,55 @@ export async function requestMultiplayerRematch(
     await updateDoc(gameRef, {
       nextGameId: newGameRef.id,
       rematchOfferBy: null,
+      rematchDeclinedBy: null,
       updatedAt: nowIso,
     });
 
     return newGameRef.id;
   }
 
-  // Otherwise mark our rematch offer
+  // Otherwise mark our rematch offer (and clear any prior decline)
   await updateDoc(gameRef, {
     rematchOfferBy: requestingColor,
+    rematchDeclinedBy: null,
     updatedAt: new Date().toISOString(),
   });
   return null;
+}
+
+/**
+ * Decline an incoming rematch offer so the requester is notified immediately
+ */
+export async function declineMultiplayerRematch(
+  gameId: string,
+  decliningColor: PieceColor
+): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+
+  await updateDoc(doc(db, GAMES_COLLECTION, gameId), {
+    rematchOfferBy: null,
+    rematchDeclinedBy: decliningColor,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Mark that a player navigated away from the post-game screen back to the lobby
+ */
+export async function markPlayerLeftPostGame(
+  gameId: string,
+  leavingColor: PieceColor
+): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+
+  try {
+    await updateDoc(doc(db, GAMES_COLLECTION, gameId), {
+      leftRoomBy: arrayUnion(leavingColor),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('Failed to mark post-game leave:', err);
+  }
 }
