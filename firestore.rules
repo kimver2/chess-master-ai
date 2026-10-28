@@ -7,13 +7,13 @@ service cloud.firestore {
       allow create, update: if request.resource.data.userId is string
         && request.resource.data.nickname is string
         && request.resource.data.nickname.size() >= 1
-        && request.resource.data.nickname.size() <= 20
-        && request.resource.data.aiLevel is int
+        && request.resource.data.nickname.size() <= 30
+        && request.resource.data.aiLevel is number
         && request.resource.data.aiLevel >= 1
         && request.resource.data.aiLevel <= 10
-        && request.resource.data.moves is int
-        && request.resource.data.moves >= 2
-        && request.resource.data.timeSec is int
+        && request.resource.data.moves is number
+        && request.resource.data.moves >= 1
+        && request.resource.data.timeSec is number
         && request.resource.data.timeSec >= 1;
       allow delete: if true;
     }
