@@ -21,19 +21,28 @@ export interface FirebaseConfig {
   appId: string;
 }
 
+const DEFAULT_FIREBASE_CONFIG: FirebaseConfig = {
+  apiKey: "AIzaSyCiUvrezaqLtEUppahQd_mLwQsB6F9JElA",
+  authDomain: "chess-master-81b27.firebaseapp.com",
+  projectId: "chess-master-81b27",
+  storageBucket: "chess-master-81b27.firebasestorage.app",
+  messagingSenderId: "690657232029",
+  appId: "1:690657232029:web:d11d9770681f9db04d4074",
+};
+
 const FIREBASE_CONFIG_STORAGE_KEY = 'chess_firebase_config_v1';
 
-// Read from Vite environment or localStorage
-export function getFirebaseConfig(): FirebaseConfig | null {
+// Read from Vite environment, localStorage, or embedded default
+export function getFirebaseConfig(): FirebaseConfig {
   try {
     const metaEnv = (import.meta as any).env || {};
     const envConfig: FirebaseConfig = {
-      apiKey: metaEnv.VITE_FIREBASE_API_KEY || '',
-      authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || '',
-      projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || '',
-      storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || '',
-      messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
-      appId: metaEnv.VITE_FIREBASE_APP_ID || '',
+      apiKey: metaEnv.VITE_FIREBASE_API_KEY || DEFAULT_FIREBASE_CONFIG.apiKey,
+      authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || DEFAULT_FIREBASE_CONFIG.authDomain,
+      projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || DEFAULT_FIREBASE_CONFIG.projectId,
+      storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || DEFAULT_FIREBASE_CONFIG.storageBucket,
+      messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || DEFAULT_FIREBASE_CONFIG.messagingSenderId,
+      appId: metaEnv.VITE_FIREBASE_APP_ID || DEFAULT_FIREBASE_CONFIG.appId,
     };
 
     if (envConfig.apiKey && envConfig.projectId) {
@@ -50,7 +59,7 @@ export function getFirebaseConfig(): FirebaseConfig | null {
   } catch (err) {
     console.warn('Error reading Firebase config:', err);
   }
-  return null;
+  return DEFAULT_FIREBASE_CONFIG;
 }
 
 export function saveCustomFirebaseConfig(config: FirebaseConfig): void {
@@ -132,12 +141,11 @@ export async function fetchOnlineLeaderboard(
 
   try {
     const colRef = collection(db, 'rankings');
-    // Order by fewest moves, limit to top 50
+    // Fetch recent top records for this AI level (index-free client-side sorting)
     const q = query(
       colRef,
       where('aiLevel', '==', aiLevel),
-      orderBy('moves', 'asc'),
-      limit(50)
+      limit(100)
     );
 
     const snapshot = await getDocs(q);
@@ -160,13 +168,21 @@ export async function fetchOnlineLeaderboard(
       });
     });
 
-    // Secondary sort by time if moves are equal
+    // Sort by fewest moves, then fastest time
     results.sort((a, b) => {
       if (a.moves !== b.moves) return a.moves - b.moves;
       return a.timeSec - b.timeSec;
     });
 
-    return results;
+    // Deduplicate by userId: keep each player's best record
+    const userBestMap = new Map<string, LeaderboardEntry>();
+    for (const r of results) {
+      if (!userBestMap.has(r.userId)) {
+        userBestMap.set(r.userId, r);
+      }
+    }
+
+    return Array.from(userBestMap.values()).slice(0, 50);
   } catch (err) {
     console.error('Error fetching online leaderboard:', err);
     return [];

@@ -18,6 +18,7 @@ import { getLocalLadder, AI_NAMES } from '../services/storageService';
 import {
   isFirebaseConfigured,
   fetchOnlineLeaderboard,
+  submitOnlineScore,
   saveCustomFirebaseConfig,
   getFirebaseConfig,
   FirebaseConfig,
@@ -39,6 +40,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
   const [rankingMode, setRankingMode] = useState<'local' | 'online'>('local');
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isSubmittingScore, setIsSubmittingScore] = useState<boolean>(false);
   const [showConfigDrawer, setShowConfigDrawer] = useState<boolean>(false);
 
   // Firebase config input states
@@ -71,16 +73,36 @@ export const RankingModal: React.FC<RankingModalProps> = ({
     setIsLoading(true);
     if (mode === 'online' && hasFirebase) {
       const onlineEntries = await fetchOnlineLeaderboard(lvl, currentUser.id);
-      if (onlineEntries.length > 0) {
-        setEntries(onlineEntries);
-      } else {
-        // Fallback to local if empty online list
-        setEntries(getLocalLadder(lvl, currentUser));
-      }
+      setEntries(onlineEntries);
     } else {
       setEntries(getLocalLadder(lvl, currentUser));
     }
     setIsLoading(false);
+  };
+
+  const handleUploadMyLocalRecord = async () => {
+    const rec = currentUser.levelRecords[selectedLevel];
+    if (!rec || !rec.conquered || !rec.bestMoves) return;
+
+    setIsSubmittingScore(true);
+    try {
+      await submitOnlineScore({
+        userId: currentUser.id,
+        nickname: currentUser.nickname,
+        avatar: currentUser.avatar,
+        avatarColor: currentUser.avatarColor,
+        rating: currentUser.rating,
+        aiLevel: selectedLevel,
+        moves: rec.bestMoves,
+        timeSec: rec.bestTimeSec || 60,
+        date: new Date().toISOString().substring(0, 10),
+      });
+      await loadRankings(selectedLevel, 'online');
+    } catch (e) {
+      console.error('Failed to submit score:', e);
+    } finally {
+      setIsSubmittingScore(false);
+    }
   };
 
   const handleLevelChange = (lvl: number) => {
@@ -267,10 +289,32 @@ export const RankingModal: React.FC<RankingModalProps> = ({
               <span>순위표를 불러오는 중입니다...</span>
             </div>
           ) : entries.length === 0 ? (
-            <div className="py-12 text-center text-zinc-500 text-xs space-y-2">
-              <Trophy className="w-8 h-8 mx-auto text-zinc-600 opacity-50" />
-              <p>아직 이 난이도의 클리어 기록이 없습니다.</p>
-              <p className="text-[11px] text-zinc-600">첫 번째로 승리하여 명예의 전당에 이름을 올려보세요!</p>
+            <div className="py-12 text-center text-zinc-500 text-xs space-y-3">
+              <Trophy className="w-10 h-10 mx-auto text-amber-500/40" />
+              <div>
+                <p className="font-bold text-zinc-300 text-sm">
+                  {rankingMode === 'online' ? '아직 등록된 온라인 순위가 없습니다.' : '아직 클리어 기록이 없습니다.'}
+                </p>
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  첫 번째로 승리하여 명예의 전당 1등에 이름을 올려보세요!
+                </p>
+              </div>
+
+              {rankingMode === 'online' && currentUser.levelRecords[selectedLevel]?.conquered && (
+                <button
+                  type="button"
+                  disabled={isSubmittingScore}
+                  onClick={handleUploadMyLocalRecord}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-md shadow-emerald-950/40 transition-all active:scale-95"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>
+                    {isSubmittingScore
+                      ? '등록 중...'
+                      : `내 로컬 기록 (${currentUser.levelRecords[selectedLevel].bestMoves}수) 온라인에 등록하기`}
+                  </span>
+                </button>
+              )}
             </div>
           ) : (
             entries.map((entry, index) => {
