@@ -52,6 +52,7 @@ import {
   sendMultiplayerReaction,
   getInitialClockMs,
   deleteGameRoom,
+  cleanupExpiredGames,
 } from '../services/multiplayerService';
 import {
   recordPvpGameResult,
@@ -208,6 +209,9 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
 
   // Clean up listeners and purge unstarted waiting room on unmount
   useEffect(() => {
+    // Silently purge expired/abandoned games in background when entering PVP
+    cleanupExpiredGames().catch(console.warn);
+
     return () => {
       if (cleanupMatchmakingRef.current) cleanupMatchmakingRef.current();
       if (unsubscribeGameRef.current) unsubscribeGameRef.current();

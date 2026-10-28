@@ -32,6 +32,88 @@ export function getTtlTimestamp(durationMs: number = TTL_DURATION_MS): Timestamp
   return Timestamp.fromMillis(Date.now() + durationMs);
 }
 
+let lastCleanupTime = 0;
+const CLEANUP_COOLDOWN_MS = 5 * 60 * 1000; // Run at most once per 5 minutes per client
+
+/**
+ * Automatically clean up expired and abandoned multiplayer games
+ * - Deletes completed/abandoned games older than 24 hours
+ * - Deletes unstarted waiting rooms older than 2 hours
+ * - Deletes old test games created without expireAt field
+ * - Runs silently in background on lobby load without blocking UI
+ */
+export async function cleanupExpiredGames(force: boolean = false): Promise<number> {
+  const now = Date.now();
+  if (!force && now - lastCleanupTime < CLEANUP_COOLDOWN_MS) {
+    return 0;
+  }
+  lastCleanupTime = now;
+
+  const db = getDb();
+  if (!db) return 0;
+
+  try {
+    const q = query(
+      collection(db, GAMES_COLLECTION),
+      where('status', 'in', ['completed', 'waiting', 'abandoned']),
+      limit(50)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return 0;
+
+    let deletedCount = 0;
+    const deletePromises: Promise<void>[] = [];
+
+    snap.forEach((d) => {
+      const data = d.data() as MultiplayerGameData;
+      let shouldDelete = false;
+
+      // 1. Check expireAt timestamp if present
+      if (data.expireAt?.seconds) {
+        if (data.expireAt.seconds * 1000 <= now) {
+          shouldDelete = true;
+        }
+      }
+
+      // 2. Completed / abandoned games older than 24 hours
+      if (!shouldDelete && (data.status === 'completed' || data.status === 'abandoned')) {
+        const timeRef = data.updatedAt || data.createdAt;
+        if (timeRef) {
+          const gameTime = new Date(timeRef).getTime();
+          if (now - gameTime > TTL_DURATION_MS) {
+            shouldDelete = true;
+          }
+        }
+      }
+
+      // 3. Unstarted waiting rooms older than 2 hours (abandoned host rooms)
+      if (!shouldDelete && data.status === 'waiting') {
+        const timeRef = data.createdAt || data.updatedAt;
+        if (timeRef) {
+          const roomTime = new Date(timeRef).getTime();
+          if (now - roomTime > 2 * 60 * 60 * 1000) {
+            shouldDelete = true;
+          }
+        }
+      }
+
+      if (shouldDelete) {
+        deletedCount++;
+        deletePromises.push(deleteDoc(d.ref).catch(() => {}));
+      }
+    });
+
+    if (deletePromises.length > 0) {
+      await Promise.all(deletePromises);
+    }
+
+    return deletedCount;
+  } catch (err) {
+    console.warn('Background cleanup of expired games skipped:', err);
+    return 0;
+  }
+}
+
 /**
  * Delete a game room from Firestore (e.g. host cancelled waiting room)
  */
