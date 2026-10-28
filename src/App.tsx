@@ -1172,6 +1172,7 @@ export const App: React.FC = () => {
         {/* Left: User Profile Quick Bar (Clickable) */}
         <button
           type="button"
+          data-tour="profile-badge"
           onClick={() => setShowProfileModal(true)}
           className="flex items-center gap-2 text-left hover:opacity-90 active:scale-98 transition-all group"
           title="내 프로필 & 전적 확인"
@@ -1194,6 +1195,7 @@ export const App: React.FC = () => {
         <div className="flex items-center gap-1.5">
           <button
             type="button"
+            data-tour="ranking-button"
             onClick={() => setShowRankingModal(true)}
             className="p-1.5 sm:p-2 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-amber-300 transition-colors flex items-center gap-1 text-xs font-semibold cursor-pointer"
             title="명예의 전당 & AI 랭킹 순위표"

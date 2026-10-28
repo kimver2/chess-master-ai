@@ -22,6 +22,29 @@ export interface TourStep {
 
 export const TOUR_STEPS: TourStep[] = [
   {
+    targetKey: 'profile-badge',
+    title: '내 프로필 & 체스 Elo 티어',
+    badge: '플레이어 랭크',
+    icon: '👑',
+    description: '내 닉네임과 기물 아바타를 커스텀하고, 대국에서 승리해 비기너부터 그랜드마스터까지 티어를 올려보세요!',
+    details: [
+      '6종 체스 기물 아바타 및 6가지 보석 테마 색상 커스터마이징',
+      'AI 대국 결과에 따른 실시간 Elo 레이팅 및 티어 진척도 게이지',
+      'AI 난이도별(Lv.1~Lv.8) 정복 훈장 및 최단 수/시간 기록',
+    ],
+  },
+  {
+    targetKey: 'ranking-button',
+    title: '명예의 전당 & 실시간 온라인 랭킹',
+    badge: '글로벌 순위표',
+    icon: '🏆',
+    description: '각 AI 난이도를 가장 적은 수(Moves)로 격파한 명예의 전당입니다. 파이어베이스로 전 세계 유저와 실시간 경쟁하세요.',
+    details: [
+      'AI 레벨별 1위~50위 최단 수(Moves) 명예의 전당 순위표',
+      '오프라인 래더 모드 & 파이어베이스 실시간 글로벌 랭킹 지원',
+    ],
+  },
+  {
     targetKey: 'opponent-bar',
     title: '상대 AI 정보 & 기물 획득 현황',
     badge: '스톡피쉬 AI',
