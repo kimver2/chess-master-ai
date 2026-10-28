@@ -1,18 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
 import { EndgamePuzzle, PieceTheme, BoardTheme } from '../types/chess';
 import { ENDGAME_PUZZLES } from '../data/endgames';
 import { stockfishService } from '../engine/stockfishService';
+import { loadClearedEndgameIds, markEndgameCleared } from '../services/storageService';
 import { soundManager } from '../utils/audio';
 import {
   Trophy,
   RotateCcw,
   Lightbulb,
   CheckCircle,
-  XCircle,
   ArrowLeft,
-  BookOpen,
+  ChevronRight,
 } from 'lucide-react';
 
 interface EndgameViewProps {
@@ -26,6 +26,17 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'beginner' | 'intermediate' | 'advanced'>('all');
   const [activePuzzle, setActivePuzzle] = useState<EndgamePuzzle | null>(null);
+  const [clearedIds, setClearedIds] = useState<Set<number>>(
+    () => new Set(loadClearedEndgameIds())
+  );
+
+  const handleMarkSuccess = (puzzleId: number, msg: string) => {
+    setIsSuccess(true);
+    soundManager.victory();
+    setStatusText(msg);
+    const updated = markEndgameCleared(puzzleId);
+    setClearedIds(new Set(updated));
+  };
 
   // Puzzle playing state
   const sessionRef = useRef<number>(0);
@@ -75,23 +86,17 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
 
       // Check success condition
       if (activePuzzle.targetResult === 'checkmate' && nextChess.isCheckmate()) {
-        setIsSuccess(true);
-        soundManager.victory();
-        setStatusText('🎉 성공! 체크메이트를 달성하셨습니다!');
+        handleMarkSuccess(activePuzzle.id, '🎉 성공! 체크메이트를 달성하셨습니다!');
         return;
       }
 
       if (activePuzzle.targetResult === 'promotion' && move.promotion) {
-        setIsSuccess(true);
-        soundManager.victory();
-        setStatusText('🎉 성공! 폰을 성공적으로 승급시켰습니다!');
+        handleMarkSuccess(activePuzzle.id, '🎉 성공! 폰을 성공적으로 승급시켰습니다!');
         return;
       }
 
       if (activePuzzle.targetResult === 'draw' && nextChess.isDraw()) {
-        setIsSuccess(true);
-        soundManager.victory();
-        setStatusText('🎉 성공! 완벽한 방어로 무승부를 확보했습니다!');
+        handleMarkSuccess(activePuzzle.id, '🎉 성공! 완벽한 방어로 무승부를 확보했습니다!');
         return;
       }
 
@@ -142,9 +147,7 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
             setStatusText('체크메이트를 당했습니다. 다시 시도해 보세요!');
           } else if (nextChess.isDraw()) {
             if (activePuzzle.targetResult === 'draw') {
-              setIsSuccess(true);
-              soundManager.victory();
-              setStatusText('🎉 성공! 무승부를 지켜냈습니다!');
+              handleMarkSuccess(activePuzzle.id, '🎉 성공! 무승부를 지켜냈습니다!');
             } else {
               setStatusText('무승부로 종료되었습니다.');
             }
@@ -238,6 +241,20 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
           >
             <Lightbulb className="w-4 h-4" /> 힌트 & 해설
           </button>
+          {isSuccess && (
+            <button
+              type="button"
+              onClick={() => {
+                const idx = ENDGAME_PUZZLES.findIndex((p) => p.id === activePuzzle.id);
+                const nextPuz = ENDGAME_PUZZLES[(idx + 1) % ENDGAME_PUZZLES.length];
+                startPuzzle(nextPuz);
+              }}
+              className="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-98 text-zinc-950 text-xs font-black flex items-center justify-center gap-1"
+            >
+              <span>다음 훈련</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {/* Explanation Card */}
@@ -255,20 +272,53 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
     );
   }
 
-  const beginnerCount = ENDGAME_PUZZLES.filter((p) => p.category === 'beginner').length;
-  const intermediateCount = ENDGAME_PUZZLES.filter((p) => p.category === 'intermediate').length;
-  const advancedCount = ENDGAME_PUZZLES.filter((p) => p.category === 'advanced').length;
+  const beginnerList = ENDGAME_PUZZLES.filter((p) => p.category === 'beginner');
+  const intermediateList = ENDGAME_PUZZLES.filter((p) => p.category === 'intermediate');
+  const advancedList = ENDGAME_PUZZLES.filter((p) => p.category === 'advanced');
+
+  const beginnerCleared = beginnerList.filter((p) => clearedIds.has(p.id)).length;
+  const intermediateCleared = intermediateList.filter((p) => clearedIds.has(p.id)).length;
+  const advancedCleared = advancedList.filter((p) => clearedIds.has(p.id)).length;
+  const totalCleared = clearedIds.size;
+  const progressPct = Math.round((totalCleared / Math.max(1, ENDGAME_PUZZLES.length)) * 100);
 
   // Puzzle Selection List View
   return (
-    <div className="flex flex-col h-full max-w-lg mx-auto p-4 space-y-4">
+    <div className="flex flex-col h-full max-w-lg mx-auto p-4 space-y-3">
+      {/* Endgame Mastery Progress Card */}
+      <div
+        data-testid="endgame-progress-card"
+        className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 space-y-2 shrink-0"
+      >
+        <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center gap-1.5 font-bold text-zinc-100">
+            <Trophy className="w-4 h-4 text-amber-400" />
+            <span>엔드게임 50선 마스터 달성률</span>
+          </div>
+          <span className="font-mono font-extrabold text-emerald-400">
+            {totalCleared} / {ENDGAME_PUZZLES.length} ({progressPct}%)
+          </span>
+        </div>
+        <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all duration-300"
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+        <div className="flex items-center justify-between text-[11px] text-zinc-400 font-medium">
+          <span>초급 {beginnerCleared}/{beginnerList.length}</span>
+          <span>중급 {intermediateCleared}/{intermediateList.length}</span>
+          <span>고급 {advancedCleared}/{advancedList.length}</span>
+        </div>
+      </div>
+
       {/* Category Pills */}
-      <div className="flex items-center gap-1.5 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
+      <div className="flex items-center gap-1.5 bg-zinc-900 p-1 rounded-xl border border-zinc-800 shrink-0">
         {[
           { id: 'all' as const, label: `전체 (${ENDGAME_PUZZLES.length})` },
-          { id: 'beginner' as const, label: `초급 (${beginnerCount})` },
-          { id: 'intermediate' as const, label: `중급 (${intermediateCount})` },
-          { id: 'advanced' as const, label: `고급 (${advancedCount})` },
+          { id: 'beginner' as const, label: `초급 (${beginnerList.length})` },
+          { id: 'intermediate' as const, label: `중급 (${intermediateList.length})` },
+          { id: 'advanced' as const, label: `고급 (${advancedList.length})` },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -286,42 +336,62 @@ export const EndgameView: React.FC<EndgameViewProps> = ({
 
       {/* Grid of Puzzles */}
       <div className="grid grid-cols-1 gap-2.5 overflow-y-auto pb-16">
-        {filteredPuzzles.map((puzzle) => (
-          <div
-            key={puzzle.id}
-            onClick={() => startPuzzle(puzzle)}
-            className="p-3.5 rounded-xl bg-zinc-900 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 active:scale-99 transition-all cursor-pointer flex flex-col gap-1.5 group"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-xs font-bold text-zinc-400">#{puzzle.id}</span>
-                <h4 className="text-sm font-bold text-zinc-200 group-hover:text-amber-400 transition-colors">
-                  {puzzle.title}
-                </h4>
+        {filteredPuzzles.map((puzzle) => {
+          const isCleared = clearedIds.has(puzzle.id);
+          return (
+            <div
+              key={puzzle.id}
+              onClick={() => startPuzzle(puzzle)}
+              className={`p-3.5 rounded-xl bg-zinc-900 hover:bg-zinc-800/80 border active:scale-99 transition-all cursor-pointer flex flex-col gap-1.5 group ${
+                isCleared
+                  ? 'border-emerald-500/40 bg-emerald-950/15'
+                  : 'border-zinc-800 hover:border-zinc-700'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono text-xs font-bold text-zinc-400 shrink-0">#{puzzle.id}</span>
+                  <h4 className="text-sm font-bold text-zinc-200 group-hover:text-amber-400 transition-colors truncate">
+                    {puzzle.title}
+                  </h4>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isCleared && (
+                    <span
+                      data-testid="endgame-cleared-badge"
+                      className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-0.5"
+                    >
+                      <CheckCircle className="w-3 h-3" />
+                      완료
+                    </span>
+                  )}
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      puzzle.category === 'beginner'
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : puzzle.category === 'intermediate'
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : 'bg-rose-500/20 text-rose-400'
+                    }`}
+                  >
+                    {puzzle.category === 'beginner' ? '초급' : puzzle.category === 'intermediate' ? '중급' : '고급'}
+                  </span>
+                </div>
               </div>
-              <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                  puzzle.category === 'beginner'
-                    ? 'bg-emerald-500/20 text-emerald-400'
-                    : puzzle.category === 'intermediate'
-                    ? 'bg-amber-500/20 text-amber-400'
-                    : 'bg-rose-500/20 text-rose-400'
-                }`}
-              >
-                {puzzle.category === 'beginner' ? '초급' : puzzle.category === 'intermediate' ? '중급' : '고급'}
-              </span>
-            </div>
 
-            <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">
-              {puzzle.goalDescription}
-            </p>
+              <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">
+                {puzzle.goalDescription}
+              </p>
 
-            <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-[11px] text-zinc-500">
-              <span>목표: {puzzle.targetResult === 'checkmate' ? '체크메이트' : puzzle.targetResult === 'promotion' ? '폰 승급' : '무승부 방어'}</span>
-              <span className="text-amber-400/90 font-medium">실습 시작 →</span>
+              <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-[11px] text-zinc-500">
+                <span>목표: {puzzle.targetResult === 'checkmate' ? '체크메이트' : puzzle.targetResult === 'promotion' ? '폰 승급' : '무승부 방어'}</span>
+                <span className="text-amber-400/90 font-medium">
+                  {isCleared ? '다시 실습 →' : '실습 시작 →'}
+                </span>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

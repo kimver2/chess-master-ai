@@ -17,6 +17,7 @@ import {
   MultiplayerGameData,
   MultiplayerPlayer,
   MultiplayerMove,
+  MultiplayerEmojiId,
 } from '../types/multiplayer';
 import { PieceColor, GameOverReason, TimeLimit } from '../types/chess';
 
@@ -549,5 +550,30 @@ export async function markPlayerLeftPostGame(
     });
   } catch (err) {
     console.warn('Failed to mark post-game leave:', err);
+  }
+}
+
+/**
+ * Send a quick preset emoji reaction/stamp in an online 1:1 game
+ */
+export async function sendMultiplayerReaction(
+  gameId: string,
+  senderColor: PieceColor,
+  emojiId: MultiplayerEmojiId
+): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+
+  try {
+    await updateDoc(doc(db, GAMES_COLLECTION, gameId), {
+      lastReaction: {
+        senderColor,
+        emojiId,
+        sentAt: Date.now(),
+      },
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('Failed to send multiplayer reaction:', err);
   }
 }

@@ -15,11 +15,22 @@ export interface SquareBadge {
   className: string;
 }
 
+export interface PremoveData {
+  from: string;
+  to: string;
+  promotion?: string;
+}
+
 interface ChessBoardProps {
   chess: Chess;
   orientation?: 'white' | 'black';
   onMove?: (from: string, to: string, promotion?: string) => boolean | void;
   interactive?: boolean;
+  allowPremove?: boolean;
+  playerColor?: Color;
+  premove?: PremoveData | null;
+  onPremoveChange?: (premove: PremoveData | null) => void;
+  confirmMoveEnabled?: boolean;
   lastMove?: { from: string; to: string } | null;
   highlightSquares?: { [square: string]: string }; // e.g. { e4: 'bg-green-500/40', e2: 'bg-green-500/20' }
   squareBadges?: { [square: string]: SquareBadge };
@@ -102,11 +113,76 @@ const calculateArrowPath = (
          `L ${sx - px * shaftWidth} ${sy - py * shaftWidth} Z`;
 };
 
-export const ChessBoard: React.FC<ChessBoardProps> = ({
+const getPremoveTargets = (
+  fromSquare: string,
+  pieceType: PieceSymbol,
+  pieceColor: Color
+): string[] => {
+  if (!fromSquare || fromSquare.length < 2) return [];
+  const f = fromSquare.charCodeAt(0) - 97;
+  const r = parseInt(fromSquare[1], 10) - 1;
+  if (f < 0 || f > 7 || r < 0 || r > 7) return [];
+
+  const targets: string[] = [];
+  const addSq = (nf: number, nr: number) => {
+    if (nf >= 0 && nf <= 7 && nr >= 0 && nr <= 7 && !(nf === f && nr === r)) {
+      targets.push(`${String.fromCharCode(97 + nf)}${nr + 1}`);
+    }
+  };
+
+  if (pieceType === 'p') {
+    const dir = pieceColor === 'w' ? 1 : -1;
+    const homeRank = pieceColor === 'w' ? 1 : 6;
+    addSq(f, r + dir);
+    if (r === homeRank) addSq(f, r + dir * 2);
+    addSq(f - 1, r + dir);
+    addSq(f + 1, r + dir);
+  } else if (pieceType === 'n') {
+    const jumps = [
+      [-2, -1], [-2, 1], [-1, -2], [-1, 2],
+      [1, -2], [1, 2], [2, -1], [2, 1],
+    ];
+    for (const [df, dr] of jumps) addSq(f + df, r + dr);
+  } else if (pieceType === 'k') {
+    for (let df = -1; df <= 1; df++) {
+      for (let dr = -1; dr <= 1; dr++) {
+        if (df !== 0 || dr !== 0) addSq(f + df, r + dr);
+      }
+    }
+    if (pieceColor === 'w' && fromSquare === 'e1') {
+      addSq(6, 0);
+      addSq(2, 0);
+    } else if (pieceColor === 'b' && fromSquare === 'e8') {
+      addSq(6, 7);
+      addSq(2, 7);
+    }
+  } else {
+    const dirs: Array<[number, number]> = [];
+    if (pieceType === 'b' || pieceType === 'q') {
+      dirs.push([-1, -1], [-1, 1], [1, -1], [1, 1]);
+    }
+    if (pieceType === 'r' || pieceType === 'q') {
+      dirs.push([-1, 0], [1, 0], [0, -1], [0, 1]);
+    }
+    for (const [df, dr] of dirs) {
+      for (let step = 1; step <= 7; step++) {
+        addSq(f + df * step, r + dr * step);
+      }
+    }
+  }
+  return targets;
+};
+
+const ChessBoardInner: React.FC<ChessBoardProps> = ({
   chess,
   orientation = 'white',
   onMove,
   interactive = true,
+  allowPremove = false,
+  playerColor,
+  premove = null,
+  onPremoveChange,
+  confirmMoveEnabled = false,
   lastMove,
   highlightSquares = {},
   squareBadges = {},
@@ -120,7 +196,16 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 }) => {
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [pendingPromotion, setPendingPromotion] = useState<{ from: string; to: string } | null>(null);
+  const [pendingConfirmMove, setPendingConfirmMove] = useState<{
+    from: string;
+    to: string;
+    usedDrag: boolean;
+  } | null>(null);
   const [dragGhost, setDragGhost] = useState<DragGhostState | null>(null);
+
+  const isPremoveMode = !interactive && Boolean(allowPremove && playerColor && onPremoveChange);
+  const canInteractBoard = interactive || isPremoveMode;
+  const controllableColor: Color = interactive ? chess.turn() : (playerColor || chess.turn());
 
   const boardRef = useRef<HTMLDivElement | null>(null);
   const pieceWrapperRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -142,9 +227,10 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   useEffect(() => {
     setSelectedSquare(null);
     setPendingPromotion(null);
+    setPendingConfirmMove(null);
     setDragGhost(null);
     pointerTrackRef.current = null;
-  }, [currentFen, interactive]);
+  }, [currentFen, interactive, isPremoveMode]);
 
   const isFlipped = orientation === 'black';
   const displayFiles = isFlipped ? [...FILES].reverse() : FILES;
@@ -223,15 +309,24 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     }
   }
 
-  // Get legal destination squares for currently selected piece
-  const legalMovesForSelected: string[] =
-    selectedSquare && interactive
-      ? chess
-          .moves({ square: selectedSquare as Square, verbose: true })
-          .map((m) => m.to as string)
-      : [];
+  // Get legal destination squares (or premove pseudo-targets) for currently selected piece
+  const legalMovesForSelected: string[] = (() => {
+    if (!selectedSquare) return [];
+    if (interactive) {
+      return chess
+        .moves({ square: selectedSquare as Square, verbose: true })
+        .map((m) => m.to as string);
+    }
+    if (isPremoveMode) {
+      const p = chess.get(selectedSquare as Square);
+      if (p && p.color === controllableColor) {
+        return getPremoveTargets(selectedSquare, p.type, p.color);
+      }
+    }
+    return [];
+  })();
 
-  const executeMoveOrPromptPromotion = (from: string, to: string, usedDrag = false) => {
+  const commitMoveOrPromptPromotion = (from: string, to: string, usedDrag = false) => {
     if (!onMove) return;
     const piece = chess.get(from as Square);
     if (
@@ -253,16 +348,38 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     setSelectedSquare(null);
   };
 
+  const executeMoveOrPromptPromotion = (from: string, to: string, usedDrag = false) => {
+    if (isPremoveMode && onPremoveChange) {
+      const piece = chess.get(from as Square);
+      const isPromo =
+        piece &&
+        piece.type === 'p' &&
+        ((piece.color === 'w' && to[1] === '8') || (piece.color === 'b' && to[1] === '1'));
+      onPremoveChange({ from, to, ...(isPromo ? { promotion: 'q' } : {}) });
+      setSelectedSquare(null);
+      return;
+    }
+
+    if (confirmMoveEnabled) {
+      setPendingConfirmMove({ from, to, usedDrag });
+      setSelectedSquare(null);
+      return;
+    }
+
+    commitMoveOrPromptPromotion(from, to, usedDrag);
+  };
+
   // Pointer Drag-and-Drop Handlers
   const handleGridPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!interactive || !onMove || pendingPromotion) return;
+    if (!canInteractBoard || pendingPromotion || pendingConfirmMove) return;
+    if (interactive && !onMove) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
 
     const sq = resolveSquareAtClientPoint(e.clientX, e.clientY);
     if (!sq) return;
 
     const piece = chess.get(sq as Square);
-    if (piece && piece.color === chess.turn()) {
+    if (piece && piece.color === controllableColor) {
       pointerTrackRef.current = {
         pointerId: e.pointerId,
         fromSquare: sq,
@@ -339,16 +456,19 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       return;
     }
 
-    const legalDests = chess
-      .moves({ square: track.fromSquare as Square, verbose: true })
-      .map((m) => m.to as string);
+    const legalDests = interactive
+      ? chess
+          .moves({ square: track.fromSquare as Square, verbose: true })
+          .map((m) => m.to as string)
+      : isPremoveMode
+      ? getPremoveTargets(track.fromSquare, track.pieceType, track.pieceColor)
+      : [];
 
     if (legalDests.includes(dropSquare)) {
       executeMoveOrPromptPromotion(track.fromSquare, dropSquare, true);
     } else {
-      // If dropped onto another own piece, select that piece instead
       const targetPiece = chess.get(dropSquare as Square);
-      if (targetPiece && targetPiece.color === chess.turn()) {
+      if (targetPiece && targetPiece.color === controllableColor) {
         setSelectedSquare(dropSquare);
       } else {
         setSelectedSquare(null);
@@ -361,7 +481,23 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       suppressNextClickRef.current = false;
       return;
     }
-    if (!interactive || !onMove || pendingPromotion) return;
+    if (!canInteractBoard || pendingPromotion) return;
+    if (interactive && !onMove) return;
+
+    if (pendingConfirmMove) {
+      setPendingConfirmMove(null);
+      return;
+    }
+
+    // If a premove is already set and user taps when no square is selected, cancel premove unless tapping own piece to start a new premove
+    if (isPremoveMode && premove && !selectedSquare) {
+      onPremoveChange?.(null);
+      const tappedPiece = chess.get(square as Square);
+      if (tappedPiece && tappedPiece.color === controllableColor && square !== premove.from) {
+        setSelectedSquare(square);
+      }
+      return;
+    }
 
     if (selectedSquare) {
       if (selectedSquare === square) {
@@ -369,16 +505,14 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         return;
       }
 
-      // Check if clicked square is a legal move
       if (legalMovesForSelected.includes(square)) {
         executeMoveOrPromptPromotion(selectedSquare, square, false);
         return;
       }
     }
 
-    // Otherwise, select piece if it matches active turn
     const piece = chess.get(square as Square);
-    if (piece && piece.color === chess.turn()) {
+    if (piece && piece.color === controllableColor) {
       setSelectedSquare(square);
     } else {
       setSelectedSquare(null);
@@ -392,6 +526,25 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     setPendingPromotion(null);
     setSelectedSquare(null);
   };
+
+  // Combine caller arrows with Premove / Move Confirmation preview arrows
+  const combinedArrows: BoardArrow[] = [...arrows];
+  if (premove) {
+    combinedArrows.push({
+      from: premove.from,
+      to: premove.to,
+      color: '#38bdf8',
+      opacity: 0.92,
+    });
+  }
+  if (pendingConfirmMove) {
+    combinedArrows.push({
+      from: pendingConfirmMove.from,
+      to: pendingConfirmMove.to,
+      color: '#10b981',
+      opacity: 0.95,
+    });
+  }
 
   const isTexturedBoard = boardTheme !== 'classic';
   const shouldRotatePiece = (pieceColor: Color) => {
@@ -414,7 +567,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       {/* 8x8 Board Grid */}
       <div
         className="w-full h-full grid grid-cols-8 grid-rows-8"
-        style={{ touchAction: interactive ? 'none' : 'auto' }}
+        style={{ touchAction: canInteractBoard ? 'none' : 'auto' }}
         onPointerDown={handleGridPointerDown}
         onPointerMove={handleGridPointerMove}
         onPointerUp={(e) => finishPointerInteraction(e, false)}
@@ -430,6 +583,9 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             const isLegalDest = legalMovesForSelected.includes(square);
             const isLastMoveFrom = lastMove?.from === square;
             const isLastMoveTo = lastMove?.to === square;
+            const isPremoveSq = premove?.from === square || premove?.to === square;
+            const isConfirmSq =
+              pendingConfirmMove?.from === square || pendingConfirmMove?.to === square;
             const isKingInCheck = inCheckSquare === square;
             const customHighlight = highlightSquares[square];
             const isDragSource = dragGhost?.fromSquare === square;
@@ -444,13 +600,21 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
               : 'bg-emerald-700';
 
             if (isDragHoverTarget) {
-              bgClass = 'bg-emerald-400/55 ring-3 ring-inset ring-emerald-300';
+              bgClass = isPremoveMode
+                ? 'bg-sky-400/55 ring-3 ring-inset ring-sky-300'
+                : 'bg-emerald-400/55 ring-3 ring-inset ring-emerald-300';
+            } else if (isConfirmSq) {
+              bgClass = 'bg-emerald-500/50 ring-2 ring-inset ring-emerald-300';
+            } else if (isPremoveSq) {
+              bgClass = 'bg-sky-500/45 ring-2 ring-inset ring-sky-300';
             } else if (customHighlight) {
               bgClass = customHighlight;
             } else if (isKingInCheck) {
               bgClass = 'bg-red-500/75 animate-pulse';
             } else if (isSelected) {
-              bgClass = isTexturedBoard
+              bgClass = isPremoveMode
+                ? 'bg-sky-400/45 ring-2 ring-inset ring-sky-300'
+                : isTexturedBoard
                 ? 'bg-amber-400/50 ring-2 ring-inset ring-amber-400'
                 : 'bg-amber-300 ring-2 ring-inset ring-amber-500';
             } else if (isLastMoveFrom || isLastMoveTo) {
@@ -460,6 +624,12 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                 ? 'bg-yellow-200/90'
                 : 'bg-emerald-600/90';
             }
+
+            const effectiveBadge: SquareBadge | undefined =
+              squareBadges?.[square] ||
+              (premove?.to === square
+                ? { text: '⚡ 예약', className: 'bg-sky-600 text-white ring-1 ring-sky-300' }
+                : undefined);
 
             return (
               <div
@@ -518,24 +688,36 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                   </div>
                 )}
 
-                {/* Legal Move Indicator */}
+                {/* Legal / Premove Indicator */}
                 {isLegalDest && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     {piece ? (
-                      <div className="w-full h-full rounded-full border-4 border-amber-400/80 ring-2 ring-amber-400/40" />
+                      <div
+                        className={`w-full h-full rounded-full border-4 ${
+                          isPremoveMode
+                            ? 'border-sky-400/75 ring-2 ring-sky-300/35'
+                            : 'border-amber-400/80 ring-2 ring-amber-400/40'
+                        }`}
+                      />
                     ) : (
-                      <div className="w-3.5 h-3.5 rounded-full bg-amber-400/85 shadow-md ring-2 ring-amber-300/40" />
+                      <div
+                        className={`w-3.5 h-3.5 rounded-full shadow-md ${
+                          isPremoveMode
+                            ? 'bg-sky-400/80 ring-2 ring-sky-300/35'
+                            : 'bg-amber-400/85 ring-2 ring-amber-300/40'
+                        }`}
+                      />
                     )}
                   </div>
                 )}
 
-                {/* Custom Square Badge (e.g. '내 착수', '최적') */}
-                {squareBadges?.[square] && (
+                {/* Custom Square Badge (e.g. '내 착수', '최적', '⚡ 예약') */}
+                {effectiveBadge && (
                   <div className="absolute top-0.5 right-0.5 z-10 pointer-events-none">
                     <span
-                      className={`px-1 py-0.2 rounded text-[8px] font-black leading-tight shadow-md select-none ${squareBadges[square].className}`}
+                      className={`px-1 py-0.2 rounded text-[8px] font-black leading-tight shadow-md select-none ${effectiveBadge.className}`}
                     >
-                      {squareBadges[square].text}
+                      {effectiveBadge.text}
                     </span>
                   </div>
                 )}
@@ -568,13 +750,13 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         </div>
       )}
 
-      {/* SVG Arrows Layer for Moves / Best Moves */}
-      {arrows && arrows.length > 0 && (
+      {/* SVG Arrows Layer for Moves / Best Moves / Premoves */}
+      {combinedArrows.length > 0 && (
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none z-20"
           viewBox="0 0 100 100"
         >
-          {arrows.map((arr, idx) => {
+          {combinedArrows.map((arr, idx) => {
             const fromCoord = getSquareCoord(arr.from, isFlipped);
             const toCoord = getSquareCoord(arr.to, isFlipped);
             if (!fromCoord || !toCoord) return null;
@@ -591,6 +773,48 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             );
           })}
         </svg>
+      )}
+
+      {/* Active Premove Cancel Pill */}
+      {premove && onPremoveChange && (
+        <button
+          type="button"
+          data-testid="cancel-premove-btn"
+          onClick={() => onPremoveChange(null)}
+          className="absolute bottom-2 left-1/2 -translate-x-1/2 z-30 px-3 py-1 rounded-full bg-sky-950/95 hover:bg-sky-900 border border-sky-400/70 text-sky-200 text-[11px] font-black flex items-center gap-1.5 shadow-xl whitespace-nowrap"
+        >
+          <span>⚡ 예약 착수 ({premove.from}→{premove.to})</span>
+          <span className="text-sky-400">✕ 취소</span>
+        </button>
+      )}
+
+      {/* Move Confirmation Floating Bar */}
+      {pendingConfirmMove && (
+        <div
+          data-testid="confirm-move-bar"
+          className="absolute bottom-2 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-zinc-950/95 border border-emerald-400/70 shadow-2xl backdrop-blur-md whitespace-nowrap"
+        >
+          <button
+            type="button"
+            data-testid="confirm-move-yes"
+            onClick={() => {
+              const { from, to, usedDrag } = pendingConfirmMove;
+              setPendingConfirmMove(null);
+              commitMoveOrPromptPromotion(from, to, usedDrag);
+            }}
+            className="px-3 py-1 rounded-full bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-black transition-all active:scale-95"
+          >
+            ✓ 착수 확정 ({pendingConfirmMove.from}→{pendingConfirmMove.to})
+          </button>
+          <button
+            type="button"
+            data-testid="confirm-move-no"
+            onClick={() => setPendingConfirmMove(null)}
+            className="px-2.5 py-1 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition-all"
+          >
+            ✕ 취소
+          </button>
+        </div>
       )}
 
       {/* Pawn Promotion Modal */}
@@ -615,3 +839,31 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     </div>
   );
 };
+
+function areBoardPropsEqual(prev: ChessBoardProps, next: ChessBoardProps): boolean {
+  return (
+    prev.chess.fen() === next.chess.fen() &&
+    prev.orientation === next.orientation &&
+    prev.interactive === next.interactive &&
+    prev.allowPremove === next.allowPremove &&
+    prev.playerColor === next.playerColor &&
+    prev.confirmMoveEnabled === next.confirmMoveEnabled &&
+    prev.pieceTheme === next.pieceTheme &&
+    prev.boardTheme === next.boardTheme &&
+    prev.rotateTopPieces === next.rotateTopPieces &&
+    prev.className === next.className &&
+    prev.customKingCheckSquare === next.customKingCheckSquare &&
+    prev.lastMove?.from === next.lastMove?.from &&
+    prev.lastMove?.to === next.lastMove?.to &&
+    prev.premove?.from === next.premove?.from &&
+    prev.premove?.to === next.premove?.to &&
+    prev.premove?.promotion === next.premove?.promotion &&
+    prev.highlightSquares === next.highlightSquares &&
+    prev.squareBadges === next.squareBadges &&
+    prev.arrows === next.arrows &&
+    prev.onMove === next.onMove &&
+    prev.onPremoveChange === next.onPremoveChange
+  );
+}
+
+export const ChessBoard = React.memo(ChessBoardInner, areBoardPropsEqual);

@@ -63,6 +63,7 @@ export interface ArchivedGame {
   finalFen: string;
   openingName?: string;
   moves: PlayedMoveRecord[];
+  cachedReview?: GameReviewData;
 }
 
 export type MoveQuality = 'best' | 'good' | 'inaccuracy' | 'mistake' | 'blunder' | 'book';

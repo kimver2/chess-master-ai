@@ -10,6 +10,10 @@ import {
   Swords,
   Users,
   Smartphone,
+  Download,
+  Zap,
+  Play,
+  AlertCircle,
 } from 'lucide-react';
 import { ArchivedGame } from '../types/chess';
 
@@ -19,6 +23,8 @@ interface GameArchiveModalProps {
   archives: ArchivedGame[];
   onAnalyzeGame: (game: ArchivedGame) => void;
   onDeleteGame: (id: string) => void;
+  onImportAndReview?: (rawText: string, perspective: 'w' | 'b') => string | null;
+  onImportToBoard?: (rawText: string) => string | null;
 }
 
 export const GameArchiveModal: React.FC<GameArchiveModalProps> = ({
@@ -27,9 +33,15 @@ export const GameArchiveModal: React.FC<GameArchiveModalProps> = ({
   archives,
   onAnalyzeGame,
   onDeleteGame,
+  onImportAndReview,
+  onImportToBoard,
 }) => {
   const [filterMode, setFilterMode] = useState<'all' | 'ai' | 'pvp'>('all');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [showImportPanel, setShowImportPanel] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importPerspective, setImportPerspective] = useState<'w' | 'b'>('w');
+  const [importError, setImportError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -125,8 +137,8 @@ export const GameArchiveModal: React.FC<GameArchiveModalProps> = ({
           </button>
         </div>
 
-        {/* Filter Bar */}
-        <div className="px-3 py-2 bg-zinc-950/50 border-b border-zinc-800 flex items-center justify-between gap-2 shrink-0">
+        {/* Filter Bar + Import Toggle */}
+        <div className="px-3 py-2 bg-zinc-950/50 border-b border-zinc-800 flex items-center justify-between gap-2 shrink-0 flex-wrap">
           <div className="flex items-center gap-1.5">
             {[
               { id: 'all', label: `전체 (${archives.length})` },
@@ -143,7 +155,7 @@ export const GameArchiveModal: React.FC<GameArchiveModalProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => setFilterMode(tab.id as 'all' | 'ai' | 'pvp')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                   filterMode === tab.id
                     ? 'bg-amber-500 text-zinc-950 shadow-xs'
                     : 'bg-zinc-850 text-zinc-400 hover:text-zinc-200'
@@ -153,8 +165,148 @@ export const GameArchiveModal: React.FC<GameArchiveModalProps> = ({
               </button>
             ))}
           </div>
-          <span className="text-[10px] text-zinc-500 font-mono">최대 30개 보관</span>
+
+          {(onImportAndReview || onImportToBoard) ? (
+            <button
+              type="button"
+              data-testid="toggle-import-pgn-btn"
+              onClick={() => {
+                setShowImportPanel((v) => !v);
+                setImportError(null);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 border transition-all ${
+                showImportPanel
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                  : 'bg-zinc-800 hover:bg-zinc-750 text-emerald-300 border-zinc-700'
+              }`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>PGN·FEN 불러오기</span>
+            </button>
+          ) : (
+            <span className="text-[10px] text-zinc-500 font-mono">최대 30개 보관</span>
+          )}
         </div>
+
+        {/* Expandable PGN / FEN Import Panel */}
+        {showImportPanel && (
+          <div
+            data-testid="import-pgn-panel"
+            className="p-3 bg-zinc-950/90 border-b border-emerald-500/30 space-y-2.5 shrink-0 animate-in fade-in duration-150"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                <Download className="w-3.5 h-3.5" />
+                <span>외부 PGN 기보 또는 FEN 국면 불러오기</span>
+              </div>
+              <button
+                type="button"
+                data-testid="import-sample-btn"
+                onClick={() => {
+                  setImportText('1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. b4 Bxb4 5. c3 Ba5 6. d4 exd4');
+                  setImportError(null);
+                }}
+                className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 font-semibold transition-colors"
+              >
+                샘플 기보 넣기
+              </button>
+            </div>
+
+            <textarea
+              data-testid="import-pgn-input"
+              value={importText}
+              onChange={(e) => {
+                setImportText(e.target.value);
+                if (importError) setImportError(null);
+              }}
+              rows={3}
+              placeholder="Chess.com·Lichess PGN 기보(예: 1. e4 e5 2. Nf3 Nc6 ...) 또는 특정 국면의 FEN 문자열을 붙여넣으세요"
+              className="w-full rounded-xl bg-zinc-900 border border-zinc-700 focus:border-emerald-500 focus:outline-none px-3 py-2 text-xs text-zinc-100 font-mono placeholder:text-zinc-500 resize-none"
+            />
+
+            <div className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="text-zinc-400">복기 기준 시점:</span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setImportPerspective('w')}
+                  className={`px-2.5 py-1 rounded-md font-bold transition-colors ${
+                    importPerspective === 'w'
+                      ? 'bg-zinc-100 text-zinc-950'
+                      : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  ♔ 백 시점
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImportPerspective('b')}
+                  className={`px-2.5 py-1 rounded-md font-bold transition-colors ${
+                    importPerspective === 'b'
+                      ? 'bg-zinc-700 text-white border border-zinc-500'
+                      : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  ♚ 흑 시점
+                </button>
+              </div>
+            </div>
+
+            {importError && (
+              <div
+                data-testid="import-pgn-error"
+                className="flex items-start gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-950/60 border border-rose-500/40 text-[11px] text-rose-300"
+              >
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-rose-400" />
+                <span>{importError}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              {onImportAndReview && (
+                <button
+                  type="button"
+                  data-testid="import-review-btn"
+                  onClick={() => {
+                    const err = onImportAndReview(importText, importPerspective);
+                    if (err) {
+                      setImportError(err);
+                    } else {
+                      setImportText('');
+                      setShowImportPanel(false);
+                      onClose();
+                    }
+                  }}
+                  className="py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+                >
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span>AI 코치 복기 분석</span>
+                </button>
+              )}
+
+              {onImportToBoard && (
+                <button
+                  type="button"
+                  data-testid="import-play-btn"
+                  onClick={() => {
+                    const err = onImportToBoard(importText);
+                    if (err) {
+                      setImportError(err);
+                    } else {
+                      setImportText('');
+                      setShowImportPanel(false);
+                      onClose();
+                    }
+                  }}
+                  className="py-2 px-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-black flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>이 국면 AI와 대국</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Archive List */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
@@ -238,15 +390,26 @@ export const GameArchiveModal: React.FC<GameArchiveModalProps> = ({
                   <div className="grid grid-cols-4 gap-1.5 pt-1 border-t border-zinc-800/80">
                     <button
                       type="button"
+                      data-testid="archive-review-btn"
                       disabled={game.moves.length === 0}
                       onClick={() => {
                         onClose();
                         onAnalyzeGame(game);
                       }}
                       className="py-1.5 px-2 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 disabled:opacity-40 text-white text-[11px] font-bold flex items-center justify-center gap-1 transition-all"
+                      title={game.cachedReview ? '이미 분석된 기보 (0초 즉시 열기)' : 'Stockfish AI 코치 복기 분석'}
                     >
-                      <TrendingUp className="w-3 h-3" />
-                      <span>복기</span>
+                      {game.cachedReview ? (
+                        <>
+                          <Zap className="w-3 h-3 text-amber-300 fill-amber-300" />
+                          <span>즉시복기</span>
+                        </>
+                      ) : (
+                        <>
+                          <TrendingUp className="w-3 h-3" />
+                          <span>복기</span>
+                        </>
+                      )}
                     </button>
 
                     <button

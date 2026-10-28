@@ -26,6 +26,14 @@ export interface MultiplayerMove {
   timestamp: string;
 }
 
+export type MultiplayerEmojiId = 'hello' | 'nice' | 'thinking' | 'oops' | 'gg';
+
+export interface MultiplayerReaction {
+  senderColor: PieceColor;
+  emojiId: MultiplayerEmojiId;
+  sentAt: number;
+}
+
 export interface MultiplayerGameData {
   id: string;
   roomCode: string;
@@ -48,6 +56,7 @@ export interface MultiplayerGameData {
   rematchDeclinedBy?: PieceColor | null;
   leftRoomBy?: PieceColor[];
   nextGameId?: string | null;
+  lastReaction?: MultiplayerReaction | null;
   createdAt: string;
   updatedAt: string;
 }

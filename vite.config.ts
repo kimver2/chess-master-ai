@@ -79,6 +79,31 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('@firebase/firestore') || id.includes('firebase/firestore')) {
+              return 'vendor-firestore';
+            }
+            if (id.includes('firebase') || id.includes('@firebase') || id.includes('/idb/')) {
+              return 'vendor-firebase-core';
+            }
+            if (id.includes('chess.js')) {
+              return 'vendor-chess';
+            }
+            if (
+              id.includes('react') ||
+              id.includes('scheduler') ||
+              id.includes('lucide-react')
+            ) {
+              return 'vendor-ui';
+            }
+          }
+          return undefined;
+        },
+      },
+    },
   },
 });
 

@@ -1,14 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { Chess } from 'chess.js';
 import { App as CapApp } from '@capacitor/app';
-import { ChessBoard, BoardArrow, SquareBadge } from './components/ChessBoard';
+import { ChessBoard, BoardArrow, SquareBadge, PremoveData } from './components/ChessBoard';
 import { PlayerBar } from './components/PlayerBar';
-import { ReviewModal } from './components/ReviewModal';
-import { EndgameView } from './components/EndgameView';
-import { PuzzleView } from './components/PuzzleView';
 import { EvalBar } from './components/EvalBar';
-import { OpeningGuideModal } from './components/OpeningGuideModal';
 import { FeatureTourGuide } from './components/FeatureTourGuide';
+import { SettingsModal } from './components/SettingsModal';
+import { GameOverModal, LastGameReward } from './components/GameOverModal';
 import { getOpeningFromMoves, ChessOpening } from './data/openings';
 import { stockfishService } from './engine/stockfishService';
 import {
@@ -35,11 +33,6 @@ import {
   Swords,
   Sparkles,
   Loader2,
-  Volume2,
-  VolumeX,
-  Smartphone,
-  Palette,
-  Eye,
   Lightbulb,
   BookOpen,
   BarChart2,
@@ -47,15 +40,11 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  HelpCircle,
   X,
   Users,
   FileText,
+  Zap,
 } from 'lucide-react';
-import { MultiplayerView } from './components/MultiplayerView';
-import { ProfileModal } from './components/ProfileModal';
-import { RankingModal } from './components/RankingModal';
-import { GameArchiveModal } from './components/GameArchiveModal';
 import { AvatarIcon } from './components/AvatarIcon';
 import { UserProfile, getTier } from './types/profile';
 import {
@@ -68,6 +57,11 @@ import {
   saveGameToArchive,
   deleteArchivedGame,
   buildStandardPgn,
+  loadConfirmMoveEnabled,
+  saveConfirmMoveEnabled,
+  getCachedReviewForMoves,
+  saveCachedReviewForMoves,
+  parseImportedPgnOrFen,
   AI_NAMES,
 } from './services/storageService';
 import { submitOnlineScore, syncUserProfileToOnlineRankings } from './services/firebaseService';
@@ -76,6 +70,32 @@ import {
   requestMultiplayerRematch,
   declineMultiplayerRematch,
 } from './services/multiplayerService';
+
+// Code-split secondary views & modals for faster initial load
+const MultiplayerView = React.lazy(() =>
+  import('./components/MultiplayerView').then((m) => ({ default: m.MultiplayerView }))
+);
+const PuzzleView = React.lazy(() =>
+  import('./components/PuzzleView').then((m) => ({ default: m.PuzzleView }))
+);
+const EndgameView = React.lazy(() =>
+  import('./components/EndgameView').then((m) => ({ default: m.EndgameView }))
+);
+const ReviewModal = React.lazy(() =>
+  import('./components/ReviewModal').then((m) => ({ default: m.ReviewModal }))
+);
+const OpeningGuideModal = React.lazy(() =>
+  import('./components/OpeningGuideModal').then((m) => ({ default: m.OpeningGuideModal }))
+);
+const ProfileModal = React.lazy(() =>
+  import('./components/ProfileModal').then((m) => ({ default: m.ProfileModal }))
+);
+const RankingModal = React.lazy(() =>
+  import('./components/RankingModal').then((m) => ({ default: m.RankingModal }))
+);
+const GameArchiveModal = React.lazy(() =>
+  import('./components/GameArchiveModal').then((m) => ({ default: m.GameArchiveModal }))
+);
 
 const getPositionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
 
@@ -120,6 +140,9 @@ export const App: React.FC = () => {
   });
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => soundManager.isSoundEnabled());
   const [hapticsEnabled, setHapticsEnabled] = useState<boolean>(() => soundManager.isHapticsEnabled());
+  const [confirmMoveEnabled, setConfirmMoveEnabled] = useState<boolean>(() =>
+    loadConfirmMoveEnabled()
+  );
 
   const handlePieceThemeChange = (t: PieceTheme) => {
     setPieceTheme(t);
@@ -145,11 +168,17 @@ export const App: React.FC = () => {
     setHapticsEnabled(enabled);
   };
 
+  const handleToggleConfirmMove = useCallback((enabled: boolean) => {
+    setConfirmMoveEnabled(enabled);
+    saveConfirmMoveEnabled(enabled);
+  }, []);
+
   // Chess Game State
   const [chess, setChess] = useState<Chess>(() => new Chess());
   const [playedMoves, setPlayedMoves] = useState<PlayedMoveRecord[]>([]);
   const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(null);
   const [isAiThinking, setIsAiThinking] = useState<boolean>(false);
+  const [premove, setPremove] = useState<PremoveData | null>(null);
   const gameSessionRef = React.useRef<number>(1);
 
   // In-Game Move History Viewing (Live Stepper)
@@ -164,7 +193,11 @@ export const App: React.FC = () => {
       return chess;
     }
     if (viewPlyIndex === -1) {
-      return new Chess();
+      try {
+        return playedMoves[0]?.fenBefore ? new Chess(playedMoves[0].fenBefore) : new Chess();
+      } catch {
+        return new Chess();
+      }
     }
     if (playedMoves[viewPlyIndex]) {
       try {
@@ -302,12 +335,7 @@ export const App: React.FC = () => {
     type: 'resign' | 'new_game';
     nextSettings?: { diff: DifficultyLevel; time: TimeLimit; side: PlayerSide };
   } | null>(null);
-  const [lastGameReward, setLastGameReward] = useState<{
-    ratingDelta: number;
-    isFirstConquest: boolean;
-    isBestMoves: boolean;
-    isBestTime: boolean;
-  } | null>(null);
+  const [lastGameReward, setLastGameReward] = useState<LastGameReward | null>(null);
   const gameStartTimeRef = React.useRef<number>(Date.now());
 
   // Global background watcher for 1:1 Rematch when player moved to Lobby or another tab
@@ -386,8 +414,11 @@ export const App: React.FC = () => {
 
     const saved = loadActiveGame();
     if (saved && saved.playedMoves.length > 0) {
-      const restoredChess = new Chess();
+      let restoredChess = new Chess();
       try {
+        if (saved.playedMoves[0]?.fenBefore) {
+          restoredChess = new Chess(saved.playedMoves[0].fenBefore);
+        }
         for (const m of saved.playedMoves) {
           restoredChess.move({ from: m.from, to: m.to, promotion: m.promotion || 'q' });
         }
@@ -723,6 +754,7 @@ export const App: React.FC = () => {
 
   const handleTimeout = (loserColor: PieceColor) => {
     gameSessionRef.current += 1;
+    setPremove(null);
     setIsAiThinking(false);
     setIsGameOver(true);
     setGameOverReason('timeout');
@@ -803,6 +835,7 @@ export const App: React.FC = () => {
     setIsGameStarted(true);
     setResumedBannerMessage(null);
     setPendingConfirmAction(null);
+    setPremove(null);
     const session = ++gameSessionRef.current;
     const newChess = new Chess();
     setChess(newChess);
@@ -868,6 +901,7 @@ export const App: React.FC = () => {
     clearActiveGame();
     setIsGameStarted(true);
     setResumedBannerMessage(null);
+    setPremove(null);
     const session = ++gameSessionRef.current;
     const side: PieceColor = opening.recommendedSide || 'w';
     const newChess = new Chess();
@@ -991,19 +1025,23 @@ export const App: React.FC = () => {
     }
   };
 
-  // Player Move Handler
-  const handlePlayerMove = (from: string, to: string, promotion = 'q') => {
+  // Player Move Handler (referentially stable via useCallback so ChessBoard React.memo avoids 1s clock re-renders)
+  const handlePlayerMoveImplRef = React.useRef<
+    (from: string, to: string, promotion?: string) => boolean
+  >(() => false);
+
+  handlePlayerMoveImplRef.current = (from: string, to: string, promotion = 'q'): boolean => {
     if (isViewingHistory) {
       setViewPlyIndex(null);
-      return;
+      return false;
     }
-    if (!isGameStarted || isGameOver || isAiThinking || chess.turn() !== playerColor) return;
+    if (!isGameStarted || isGameOver || isAiThinking || chess.turn() !== playerColor) return false;
 
     const session = gameSessionRef.current;
     const fenBefore = chess.fen();
     try {
       const move = chess.move({ from, to, promotion });
-      if (!move) return;
+      if (!move) return false;
 
       const hintFollowed = !!(
         activeHint &&
@@ -1051,7 +1089,7 @@ export const App: React.FC = () => {
         soundManager.check();
       }
 
-      if (checkGameOver(nextChess, playerColor, updatedMoves)) return;
+      if (checkGameOver(nextChess, playerColor, updatedMoves)) return true;
 
       // Handle Guided Opening progression
       if (guidedOpening) {
@@ -1073,7 +1111,15 @@ export const App: React.FC = () => {
             setGuidedStep(nextStep);
             const aiSan = guidedOpening.moves[nextStep];
             setTimeout(() => {
-              executeAiGuidedMove(nextChess, aiSan, guidedOpening, nextStep, updatedMoves, playerColor, session);
+              executeAiGuidedMove(
+                nextChess,
+                aiSan,
+                guidedOpening,
+                nextStep,
+                updatedMoves,
+                playerColor,
+                session
+              );
             }, 500);
           }
         } else {
@@ -1089,10 +1135,50 @@ export const App: React.FC = () => {
         // Normal AI Turn
         triggerAiMove(nextChess, difficulty, updatedMoves, playerColor, session);
       }
+      return true;
     } catch {
-      // invalid move
+      return false;
     }
   };
+
+  const handlePlayerMove = useCallback((from: string, to: string, promotion?: string) => {
+    return handlePlayerMoveImplRef.current(from, to, promotion);
+  }, []);
+
+  // Auto-execute queued Premove when AI finishes thinking and turn returns to playerColor
+  useEffect(() => {
+    if (!premove) return;
+    if (!isGameStarted || isGameOver || isViewingHistory) {
+      setPremove(null);
+      return;
+    }
+    if (isAiThinking || chess.turn() !== playerColor) return;
+
+    const queued = premove;
+    setPremove(null);
+    try {
+      const test = new Chess(chess.fen());
+      const legal = test.move({
+        from: queued.from,
+        to: queued.to,
+        promotion: queued.promotion || 'q',
+      });
+      if (legal) {
+        handlePlayerMove(queued.from, queued.to, queued.promotion || 'q');
+      }
+    } catch {
+      // Illegal premove in new position -> silently canceled
+    }
+  }, [
+    premove,
+    isGameStarted,
+    isGameOver,
+    isViewingHistory,
+    isAiThinking,
+    chess,
+    playerColor,
+    handlePlayerMove,
+  ]);
 
   // AI Move Handler
   const triggerAiMove = async (
@@ -1179,7 +1265,7 @@ export const App: React.FC = () => {
   const isThreefoldRepetitionInHistory = (history: PlayedMoveRecord[], currentFen: string): boolean => {
     const targetKey = getPositionKey(currentFen);
     let count = 0;
-    const initialKey = getPositionKey(new Chess().fen());
+    const initialKey = getPositionKey(history[0]?.fenBefore || new Chess().fen());
     if (initialKey === targetKey) count++;
     for (const m of history) {
       if (getPositionKey(m.fenAfter) === targetKey) {
@@ -1197,6 +1283,7 @@ export const App: React.FC = () => {
   ): boolean => {
     if (game.isCheckmate()) {
       setIsGameOver(true);
+      setPremove(null);
       setActiveHint(null);
       setGameOverReason('checkmate');
       const outcome = game.turn() === humanColor ? 'loss' : 'win';
@@ -1223,6 +1310,7 @@ export const App: React.FC = () => {
         ? 'threefold_repetition'
         : 'insufficient_material';
       setIsGameOver(true);
+      setPremove(null);
       setActiveHint(null);
       setGameOverReason(drawReason);
       setGameResult('draw');
@@ -1237,19 +1325,21 @@ export const App: React.FC = () => {
     return false;
   };
 
-  // Undo Move (Restores moves accurately from history)
+  // Undo Move (Restores moves accurately from history, including custom FEN imports)
   const handleUndo = () => {
     setViewPlyIndex(null);
-    const minMoves = playerColor === 'w' ? 2 : 3;
+    setPremove(null);
+    const minMoves = playedMoves[0]?.fenBefore && playedMoves[0].color === playerColor ? 2 : playerColor === 'w' ? 2 : 3;
     if (isGameOver || isAiThinking || playedMoves.length < minMoves) return;
     gameSessionRef.current += 1;
     soundManager.move();
     setActiveHint(null);
 
+    const baseStartFen = playedMoves[0]?.fenBefore;
     const newHistory = playedMoves.slice(0, -2);
     setPlayedMoves(newHistory);
 
-    const restoredChess = new Chess();
+    const restoredChess = baseStartFen ? new Chess(baseStartFen) : new Chess();
     for (const m of newHistory) {
       restoredChess.move({ from: m.from, to: m.to, promotion: m.promotion || 'q' });
     }
@@ -1272,6 +1362,7 @@ export const App: React.FC = () => {
   const handleResign = () => {
     if (isGameOver) return;
     setPendingConfirmAction(null);
+    setPremove(null);
     gameSessionRef.current += 1;
     setIsAiThinking(false);
     setIsGameOver(true);
@@ -1285,15 +1376,24 @@ export const App: React.FC = () => {
     }, 600);
   };
 
-  // Run Game Review for any move list (current AI match, archived match, or PVP match)
+  // Run Game Review for any move list (with 0ms local cache lookup & persistence)
   const runMovesReview = async (
     movesToAnalyze: PlayedMoveRecord[],
-    targetPlayerColor: PieceColor = playerColor
+    targetPlayerColor: PieceColor = playerColor,
+    archivedGame?: ArchivedGame
   ) => {
     if (movesToAnalyze.length === 0) return;
     setShowArchiveModal(false);
     setShowGameOverModal(false);
     setReviewPlayerColor(targetPlayerColor);
+
+    const cached = getCachedReviewForMoves(movesToAnalyze, archivedGame);
+    if (cached) {
+      setReviewData(cached);
+      setShowReviewModal(true);
+      return;
+    }
+
     setIsAnalyzing(true);
     setAnalysisProgress({ current: 0, total: movesToAnalyze.length });
 
@@ -1301,6 +1401,12 @@ export const App: React.FC = () => {
       const result = await stockfishService.analyzeGame(movesToAnalyze, (curr, total) => {
         setAnalysisProgress({ current: curr, total });
       });
+      const updatedArchives = saveCachedReviewForMoves(
+        movesToAnalyze,
+        result,
+        archivedGame?.id
+      );
+      setGameArchives(updatedArchives);
       setReviewData(result);
       setShowReviewModal(true);
     } catch (err) {
@@ -1313,6 +1419,98 @@ export const App: React.FC = () => {
 
   const runGameReview = async () => {
     await runMovesReview(playedMoves, playerColor);
+  };
+
+  // External PGN / FEN Import -> AI Coach Review
+  const handleImportAndReview = (rawText: string, perspective: 'w' | 'b'): string | null => {
+    const parsed = parseImportedPgnOrFen(rawText);
+    if (!parsed.ok) return parsed.error;
+    if (parsed.isCustomFenOnly || parsed.moves.length === 0) {
+      return '단일 FEN 국면은 수순이 없으므로 [이 국면 AI와 대국] 버튼을 이용해 주세요.';
+    }
+
+    const oppName =
+      perspective === 'w'
+        ? parsed.blackName || '외부 기보 (흑)'
+        : parsed.whiteName || '외부 기보 (백)';
+    const detectedOp = getOpeningFromMoves(parsed.moves.map((m) => m.san));
+
+    const savedArc = saveGameToArchive({
+      date: new Date().toISOString(),
+      mode: 'ai',
+      opponentName: `외부 기보 · ${oppName}`,
+      playerColor: perspective,
+      result: 'draw',
+      reason: null,
+      moveCount: parsed.moves.length,
+      durationSec: Math.max(10, parsed.moves.length * 5),
+      pgn: parsed.pgn,
+      finalFen: parsed.finalFen,
+      openingName: detectedOp?.nameKo,
+      moves: parsed.moves,
+    });
+    setGameArchives(loadGameArchive());
+    runMovesReview(parsed.moves, perspective, savedArc);
+    return null;
+  };
+
+  // External PGN / FEN Import -> Load onto Board & Play vs Stockfish AI
+  const handleImportToBoard = (rawText: string): string | null => {
+    const parsed = parseImportedPgnOrFen(rawText);
+    if (!parsed.ok) return parsed.error;
+
+    let loadedChess = new Chess(parsed.startFen);
+    try {
+      for (const m of parsed.moves) {
+        loadedChess.move({ from: m.from, to: m.to, promotion: m.promotion || 'q' });
+      }
+    } catch {
+      loadedChess = new Chess(parsed.finalFen);
+    }
+
+    if (loadedChess.isGameOver()) {
+      return '이미 체크메이트 또는 무승부로 종료된 국면입니다. [AI 코치 복기 분석]을 이용해 주세요.';
+    }
+
+    clearActiveGame();
+    setActiveTab('play');
+    const session = ++gameSessionRef.current;
+    const humanSide: PieceColor = loadedChess.turn();
+    setIsGameStarted(true);
+    setIsGameOver(false);
+    setShowGameOverModal(false);
+    setGameResult('ongoing');
+    setGameOverReason(null);
+    setLastGameReward(null);
+    setPremove(null);
+    setActiveHint(null);
+    setGuidedOpening(null);
+    setGuidedStep(0);
+    setViewPlyIndex(null);
+    setPlayerColor(humanSide);
+    setChosenSide(humanSide === 'w' ? 'white' : 'black');
+    setChess(loadedChess);
+    setPlayedMoves(parsed.moves);
+    const lastMv = parsed.moves[parsed.moves.length - 1];
+    setLastMove(lastMv ? { from: lastMv.from, to: lastMv.to } : null);
+
+    const ms = timeLimit === '5m' ? 300000 : timeLimit === '10m' ? 600000 : null;
+    setWhiteTimeMs(ms);
+    setBlackTimeMs(ms);
+    gameStartTimeRef.current = Date.now();
+
+    setResumedBannerMessage(
+      parsed.isCustomFenOnly
+        ? `📥 외부 FEN 국면을 불러왔습니다 (${humanSide === 'w' ? '백' : '흑'} 차례 · AI와 대국 시작!)`
+        : `📥 외부 기보(${parsed.moves.length}수)를 불러왔습니다 (${humanSide === 'w' ? '백' : '흑'} 진영으로 이어 두기!)`
+    );
+    setTimeout(() => {
+      if (gameSessionRef.current === session) {
+        setResumedBannerMessage(null);
+      }
+    }, 5500);
+    soundManager.gameStart();
+    return null;
   };
 
   // Material & captured pieces calculation (accurately tracks captures and promotions)
@@ -1731,6 +1929,16 @@ export const App: React.FC = () => {
                     chess.turn() === playerColor &&
                     !isViewingHistory
                   }
+                  allowPremove={
+                    isGameStarted &&
+                    !isGameOver &&
+                    !isViewingHistory &&
+                    (isAiThinking || chess.turn() !== playerColor)
+                  }
+                  playerColor={playerColor}
+                  premove={premove}
+                  onPremoveChange={setPremove}
+                  confirmMoveEnabled={confirmMoveEnabled}
                   lastMove={displayLastMove}
                   highlightSquares={activeHighlights}
                   squareBadges={activeBadges}
@@ -1933,6 +2141,94 @@ export const App: React.FC = () => {
               />
             </div>
 
+            {/* Pre-Game 1-Tap Quick Setup Bar (visible before pressing 게임 시작) */}
+            {!isGameStarted && !isGameOver && (
+              <div
+                data-testid="pregame-quick-setup"
+                className="flex items-center justify-between gap-1.5 px-2 py-1.5 rounded-xl bg-zinc-900/95 border border-emerald-500/35 text-[11px] shrink-0"
+              >
+                {/* 1. AI Difficulty Stepper */}
+                <div className="flex items-center gap-0.5 bg-zinc-950/90 border border-zinc-800 rounded-lg p-0.5 shrink-0">
+                  <button
+                    type="button"
+                    data-testid="quick-diff-prev"
+                    disabled={difficulty <= 1}
+                    onClick={() => setDifficulty((d) => Math.max(1, d - 1) as DifficultyLevel)}
+                    className="w-5 h-6 rounded hover:bg-zinc-800 disabled:opacity-30 text-zinc-300 flex items-center justify-center"
+                    title="AI 난이도 낮추기"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span
+                    data-testid="quick-diff-label"
+                    className="px-1.5 font-mono font-black text-amber-300 text-[11px]"
+                  >
+                    Lv.{difficulty}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="quick-diff-next"
+                    disabled={difficulty >= 10}
+                    onClick={() => setDifficulty((d) => Math.min(10, d + 1) as DifficultyLevel)}
+                    className="w-5 h-6 rounded hover:bg-zinc-800 disabled:opacity-30 text-zinc-300 flex items-center justify-center"
+                    title="AI 난이도 높이기"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* 2. Time Control Quick Chips */}
+                <div className="flex items-center gap-0.5 bg-zinc-950/90 border border-zinc-800 rounded-lg p-0.5 shrink-0">
+                  {(
+                    [
+                      { id: '5m', label: '5분' },
+                      { id: '10m', label: '10분' },
+                      { id: 'unlimited', label: '무제한' },
+                    ] as const
+                  ).map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      data-testid={`quick-time-${t.id}`}
+                      onClick={() => setTimeLimit(t.id)}
+                      className={`px-2 py-1 rounded-md font-bold text-[10px] transition-colors ${
+                        timeLimit === t.id
+                          ? 'bg-amber-500 text-zinc-950'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 3. Side Quick Chips */}
+                <div className="flex items-center gap-0.5 bg-zinc-950/90 border border-zinc-800 rounded-lg p-0.5 shrink-0">
+                  {(
+                    [
+                      { id: 'white', label: '백' },
+                      { id: 'black', label: '흑' },
+                      { id: 'random', label: '랜덤' },
+                    ] as const
+                  ).map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      data-testid={`quick-side-${s.id}`}
+                      onClick={() => setChosenSide(s.id)}
+                      className={`px-2 py-1 rounded-md font-bold text-[10px] transition-colors ${
+                        chosenSide === s.id
+                          ? 'bg-emerald-500 text-zinc-950'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Action Bar (In-Game vs Post-Game Board Viewing) */}
             <div data-tour="action-controls" className="w-full shrink-0">
               {isGameOver && !showGameOverModal ? (
@@ -1986,7 +2282,12 @@ export const App: React.FC = () => {
                       !isGameStarted ||
                       isGameOver ||
                       isAiThinking ||
-                      playedMoves.length < (playerColor === 'w' ? 2 : 3)
+                      playedMoves.length <
+                        (playedMoves[0]?.fenBefore && playedMoves[0].color === playerColor
+                          ? 2
+                          : playerColor === 'w'
+                          ? 2
+                          : 3)
                     }
                     className="py-1.5 sm:py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-zinc-300 text-[11px] font-semibold flex items-center justify-center gap-1 border border-zinc-800"
                     title="한 수 물리기"
@@ -2033,35 +2334,61 @@ export const App: React.FC = () => {
                 disabled={isAnalyzing}
                 className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-99 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 shrink-0"
               >
-                <TrendingUp className="w-4 h-4" />
-                {isGameOver ? '대국 정밀 복기하기 (형세·실수 분석)' : '현재까지의 대국 복기하기'}
+                {getCachedReviewForMoves(playedMoves) ? (
+                  <>
+                    <Zap className="w-4 h-4 text-amber-300 fill-amber-300" />
+                    <span>즉시 복기 열기 (분석 캐시 완료)</span>
+                  </>
+                ) : (
+                  <>
+                    <TrendingUp className="w-4 h-4" />
+                    <span>
+                      {isGameOver
+                        ? '대국 정밀 복기하기 (형세·실수 분석)'
+                        : '현재까지의 대국 복기하기'}
+                    </span>
+                  </>
+                )}
               </button>
             )}
           </div>
-        ) : activeTab === 'pvp' ? (
-          <div className="flex-1 flex flex-col overflow-y-auto">
-            <MultiplayerView
-              currentUser={userProfile}
-              pieceTheme={pieceTheme}
-              boardTheme={boardTheme}
-              onBackToPlay={() => setActiveTab('play')}
-              onProfileUpdated={setUserProfile}
-              onArchiveSaved={() => setGameArchives(loadGameArchive())}
-              onAnalyzeMoves={(moves, myColor) => runMovesReview(moves, myColor)}
-              externalJoinGameId={externalJoinGameId}
-              onConsumeExternalJoin={handleConsumeExternalJoin}
-              onWatchRematchGame={setWatchedRematchInfo}
-              onActivePvpBoardChange={setActivePvpBoardGameId}
-            />
-          </div>
-        ) : activeTab === 'puzzle' ? (
-          <div className="flex-1 overflow-y-auto">
-            <PuzzleView pieceTheme={pieceTheme} boardTheme={boardTheme} />
-          </div>
         ) : (
-          <div className="flex-1 overflow-y-auto">
-            <EndgameView pieceTheme={pieceTheme} boardTheme={boardTheme} />
-          </div>
+          <Suspense
+            fallback={
+              <div className="flex-1 flex flex-col items-center justify-center gap-2 text-zinc-400">
+                <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
+                <span className="text-xs font-semibold">모드 불러오는 중...</span>
+              </div>
+            }
+          >
+            {activeTab === 'pvp' ? (
+              <div className="flex-1 flex flex-col overflow-y-auto">
+                <MultiplayerView
+                  currentUser={userProfile}
+                  pieceTheme={pieceTheme}
+                  boardTheme={boardTheme}
+                  confirmMoveEnabled={confirmMoveEnabled}
+                  onToggleConfirmMove={handleToggleConfirmMove}
+                  onBackToPlay={() => setActiveTab('play')}
+                  onProfileUpdated={setUserProfile}
+                  onArchiveSaved={() => setGameArchives(loadGameArchive())}
+                  onAnalyzeMoves={(moves, myColor) => runMovesReview(moves, myColor)}
+                  externalJoinGameId={externalJoinGameId}
+                  onConsumeExternalJoin={handleConsumeExternalJoin}
+                  onWatchRematchGame={setWatchedRematchInfo}
+                  onActivePvpBoardChange={setActivePvpBoardGameId}
+                />
+              </div>
+            ) : activeTab === 'puzzle' ? (
+              <div className="flex-1 overflow-y-auto">
+                <PuzzleView pieceTheme={pieceTheme} boardTheme={boardTheme} />
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto">
+                <EndgameView pieceTheme={pieceTheme} boardTheme={boardTheme} />
+              </div>
+            )}
+          </Suspense>
         )}
       </main>
 
@@ -2114,379 +2441,57 @@ export const App: React.FC = () => {
         </button>
       </footer>
 
-      {/* Game Over Dialog */}
-      {showGameOverModal && (
-        <div className="fixed inset-0 z-40 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl max-w-sm w-full text-center space-y-4 shadow-2xl">
-            <div className="text-3xl">
-              {gameResult === 'win' ? '🏆' : gameResult === 'loss' ? '💀' : '🤝'}
-            </div>
-            <div>
-              <h3 className="text-lg font-extrabold text-zinc-100">
-                {gameResult === 'win'
-                  ? '플레이어 승리! 🎉'
-                  : gameResult === 'loss'
-                  ? 'AI 승리'
-                  : '무승부 (Draw)'}
-              </h3>
-              <p className="text-xs text-zinc-400 mt-1">
-                {gameOverReason === 'checkmate'
-                  ? '체크메이트로 경기가 종료되었습니다.'
-                  : gameOverReason === 'timeout'
-                  ? '시간 초과로 승패가 결정되었습니다.'
-                  : gameOverReason === 'resignation'
-                  ? '기권으로 종료되었습니다.'
-                  : '스테일메이트 또는 기물 부족 무승부입니다.'}
-              </p>
-            </div>
+      {/* Extracted Game Over Modal */}
+      <GameOverModal
+        isOpen={showGameOverModal}
+        gameResult={gameResult}
+        gameOverReason={gameOverReason}
+        lastGameReward={lastGameReward}
+        userProfile={userProfile}
+        difficulty={difficulty}
+        playedMovesCount={playedMoves.length}
+        isAnalyzing={isAnalyzing}
+        onRunReview={runGameReview}
+        onCloseToBoard={() => setShowGameOverModal(false)}
+        onStartNewGame={() => startNewGame()}
+        onOpenRanking={() => {
+          setShowGameOverModal(false);
+          setShowRankingModal(true);
+        }}
+      />
 
-            {/* Player Rating & Achievement Card */}
-            {lastGameReward && (
-              <div className="p-3 rounded-xl bg-zinc-950/80 border border-zinc-800 space-y-2 text-left">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <AvatarIcon avatar={userProfile.avatar} color={userProfile.avatarColor} size="sm" />
-                    <div>
-                      <span className="font-bold text-white text-xs block">{userProfile.nickname}</span>
-                      <span className="text-[10px] text-zinc-400">{getTier(userProfile.rating).name}</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="flex items-center gap-1 font-mono font-bold text-xs">
-                      <span className="text-zinc-200">{userProfile.rating} Elo</span>
-                      <span
-                        className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                          lastGameReward.ratingDelta >= 0
-                            ? 'bg-emerald-500/20 text-emerald-400'
-                            : 'bg-rose-500/20 text-rose-400'
-                        }`}
-                      >
-                        {lastGameReward.ratingDelta >= 0
-                          ? `+${lastGameReward.ratingDelta}`
-                          : lastGameReward.ratingDelta}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {lastGameReward.isFirstConquest && (
-                  <div className="p-2 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-1.5">
-                    <span>🏆</span>
-                    <span>AI Lv.{difficulty} 최초 격파! 명예 훈장 획득!</span>
-                  </div>
-                )}
-
-                {lastGameReward.isBestMoves && !lastGameReward.isFirstConquest && (
-                  <div className="p-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold flex items-center gap-1">
-                    <span>⚡</span>
-                    <span>새로운 최소 수 승리 기록 ({playedMoves.length}수)!</span>
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowGameOverModal(false);
-                    setShowRankingModal(true);
-                  }}
-                  className="w-full py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-amber-400 text-xs font-bold flex items-center justify-center gap-1 transition-colors"
-                >
-                  <Trophy className="w-3.5 h-3.5" />
-                  <span>명예의 전당 순위표 확인</span>
-                </button>
-              </div>
-            )}
-
-            <div className="space-y-2 pt-2">
-              <button
-                type="button"
-                onClick={runGameReview}
-                disabled={isAnalyzing}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 transition-all"
-              >
-                <TrendingUp className="w-4 h-4" /> 대국 정밀 복기하기
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowGameOverModal(false)}
-                className="w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:scale-98 text-zinc-200 font-semibold text-xs border border-zinc-700 flex items-center justify-center gap-1.5 transition-all"
-              >
-                <Eye className="w-4 h-4 text-amber-400" /> 체스판 둘러보기
-              </button>
-              <button
-                type="button"
-                onClick={() => startNewGame()}
-                className="w-full py-2.5 rounded-xl bg-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 font-medium text-xs border border-zinc-700/60 transition-all"
-              >
-                새 대국 시작하기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Settings Modal */}
-      {showSettingsModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl max-w-sm w-full space-y-4 max-h-[88vh] overflow-y-auto shadow-2xl">
-            <h3 className="text-base font-bold text-zinc-100 border-b border-zinc-800 pb-2 flex items-center justify-between">
-              <span>게임 환경 설정</span>
-              <span className="text-[11px] text-zinc-500 font-normal">오프라인 완벽 지원</span>
-            </h3>
-
-            {/* Piece Theme Selection */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
-                <Palette className="w-3.5 h-3.5 text-amber-400" />
-                체스 기물 그래픽 (3D 리얼)
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { id: '3d_staunton', label: '3D 프리미엄 우드', desc: '고급 원목 & 입체 섀도' },
-                  { id: '3d_wood', label: '3D 골든 래커', desc: '광택 목조 조각상' },
-                  { id: 'metal', label: '3D 메탈릭 스틸', desc: '세련된 크롬 금속' },
-                  { id: 'classic', label: '클래식 벡터', desc: '단정한 2D 플랫' },
-                ].map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => handlePieceThemeChange(t.id as PieceTheme)}
-                    className={`p-2 rounded-xl border text-left flex items-center gap-2 transition-all ${
-                      pieceTheme === t.id
-                        ? 'bg-amber-500/15 border-amber-400 text-amber-300 ring-1 ring-amber-400/50'
-                        : 'bg-zinc-800/80 border-zinc-700/80 text-zinc-300 hover:bg-zinc-800'
-                    }`}
-                  >
-                    <div className="w-7 h-7 rounded-lg bg-zinc-950/70 flex items-center justify-center p-0.5 shrink-0 border border-zinc-700/50">
-                      {t.id !== 'classic' ? (
-                        <img src={`/pieces/${t.id}/wn.png`} alt="" className="w-full h-full object-contain" />
-                      ) : (
-                        <span className="text-xs font-bold text-amber-200">♞</span>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-bold truncate">{t.label}</div>
-                      <div className="text-[9px] text-zinc-400 truncate">{t.desc}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Board Theme Selection */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-zinc-300">체스판 테마</label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {[
-                  { id: 'walnut', label: '월넛 원목' },
-                  { id: 'tournament', label: '토너먼트' },
-                  { id: 'marble', label: '대리석' },
-                  { id: 'dark_wood', label: '다크 흑단' },
-                  { id: 'classic', label: '클래식 플랫' },
-                ].map((b) => (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => handleBoardThemeChange(b.id as BoardTheme)}
-                    className={`py-2 px-1 rounded-lg text-[11px] font-bold border transition-all text-center truncate ${
-                      boardTheme === b.id
-                        ? 'bg-amber-500 border-amber-400 text-zinc-950 shadow-sm'
-                        : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-750'
-                    }`}
-                  >
-                    {b.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Audio & Haptic Feedback */}
-            <div className="space-y-1.5 pt-1 border-t border-zinc-800/80">
-              <label className="text-xs font-semibold text-zinc-300">사운드 & 진동 피드백</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleToggleSound(!soundEnabled)}
-                  className={`py-2 px-2.5 rounded-lg text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
-                    soundEnabled
-                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                      : 'bg-zinc-800 border-zinc-700 text-zinc-400'
-                  }`}
-                >
-                  {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-                  효과음 {soundEnabled ? '켜짐' : '꺼짐'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleToggleHaptics(!hapticsEnabled)}
-                  className={`py-2 px-2.5 rounded-lg text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
-                    hapticsEnabled
-                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
-                      : 'bg-zinc-800 border-zinc-700 text-zinc-400'
-                  }`}
-                >
-                  <Smartphone className="w-3.5 h-3.5" />
-                  진동 {hapticsEnabled ? '켜짐' : '꺼짐'}
-                </button>
-              </div>
-            </div>
-
-            {/* Real-time Evaluation Bar Setting */}
-            <div className="space-y-1.5 pt-1 border-t border-zinc-800/80">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
-                  <BarChart2 className="w-3.5 h-3.5 text-amber-400" />
-                  실시간 형세 평가 바 (Eval Bar)
-                </label>
-                <button
-                  type="button"
-                  onClick={() => handleToggleEvalBar(!showEvalBar)}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold border transition-all ${
-                    showEvalBar
-                      ? 'bg-amber-500 border-amber-400 text-zinc-950 shadow-sm'
-                      : 'bg-zinc-800 border-zinc-700 text-zinc-400'
-                  }`}
-                >
-                  {showEvalBar ? '켜짐' : '꺼짐'}
-                </button>
-              </div>
-              <p className="text-[10px] text-zinc-400 leading-tight">
-                체스판 좌측에 스톡피쉬 엔진의 유불리 점수(+- 폰 우세)를 세로 막대로 실시간 표시합니다.
-              </p>
-            </div>
-
-            {/* Time Control */}
-            <div className="space-y-1.5 pt-1 border-t border-zinc-800/80">
-              <label className="text-xs font-semibold text-zinc-300">대국 제한 시간</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['5m', '10m', 'unlimited'] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTimeLimit(t)}
-                    className={`py-2 rounded-lg text-xs font-bold border transition-all ${
-                      timeLimit === t
-                        ? 'bg-amber-500 border-amber-400 text-zinc-950 shadow-sm'
-                        : 'bg-zinc-800 border-zinc-700 text-zinc-300'
-                    }`}
-                  >
-                    {t === '5m' ? '5분' : t === '10m' ? '10분' : '무제한'}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Side Selection */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-zinc-300">진영 선택</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(
-                  [
-                    { id: 'white', label: '백 (White)' },
-                    { id: 'black', label: '흑 (Black)' },
-                    { id: 'random', label: '랜덤' },
-                  ] as const
-                ).map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => setChosenSide(s.id)}
-                    className={`py-2 rounded-lg text-xs font-bold border transition-all ${
-                      chosenSide === s.id
-                        ? 'bg-amber-500 border-amber-400 text-zinc-950 shadow-sm'
-                        : 'bg-zinc-800 border-zinc-700 text-zinc-300'
-                    }`}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Difficulty Slider */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs font-semibold text-zinc-300">
-                <span>AI 난이도</span>
-                <span className="text-amber-400 font-bold">
-                  Lv.{difficulty}{' '}
-                  {difficulty <= 3
-                    ? '(초급)'
-                    : difficulty <= 6
-                    ? '(중급)'
-                    : difficulty <= 8
-                    ? '(고급)'
-                    : '(마스터)'}
-                </span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                value={difficulty}
-                onChange={(e) => setDifficulty(parseInt(e.target.value, 10) as DifficultyLevel)}
-                className="w-full accent-amber-500 cursor-pointer"
-              />
-              <div className="flex justify-between text-[10px] text-zinc-500">
-                <span>1 (쉬움)</span>
-                <span>5 (보통)</span>
-                <span>10 (최상)</span>
-              </div>
-            </div>
-
-            {/* Tour Guide Replay */}
-            <div className="pt-1 border-t border-zinc-800/80">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSettingsModal(false);
-                  setTimeout(() => setShowTourGuide(true), 200);
-                }}
-                className="w-full py-2.5 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-amber-300 text-xs font-bold flex items-center justify-center gap-2 border border-zinc-700/80 transition-all active:scale-98 cursor-pointer"
-              >
-                <HelpCircle className="w-4 h-4 text-amber-400" />
-                <span>앱 기능 가이드 (튜토리얼) 다시 보기</span>
-              </button>
-            </div>
-
-            {/* Legal & Open Source Info */}
-            <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between text-[11px] text-zinc-400 px-1">
-              <a
-                href="/privacy.html"
-                target="_blank"
-                rel="noreferrer"
-                className="hover:text-amber-300 underline underline-offset-2 flex items-center gap-1 transition-colors"
-                title="개인정보처리방침 열기"
-              >
-                <span>개인정보처리방침</span>
-                <span className="text-[10px]">↗</span>
-              </a>
-              <span className="text-zinc-500 font-mono text-[10px]">Stockfish GPL v3</span>
-            </div>
-
-            {/* Start Button */}
-            <div className="pt-2 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setShowSettingsModal(false)}
-                className="flex-1 py-2.5 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-bold"
-              >
-                닫기
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSettingsModal(false);
-                  requestNewGame(difficulty, timeLimit, chosenSide);
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 text-zinc-950 text-xs font-bold shadow-md shadow-amber-950/30"
-              >
-                {!isGameStarted ? '설정 적용 후 게임 시작' : '설정 적용 후 새 게임'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Extracted Settings Modal */}
+      <SettingsModal
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
+        isGameStarted={isGameStarted}
+        pieceTheme={pieceTheme}
+        onPieceThemeChange={handlePieceThemeChange}
+        boardTheme={boardTheme}
+        onBoardThemeChange={handleBoardThemeChange}
+        soundEnabled={soundEnabled}
+        onToggleSound={handleToggleSound}
+        hapticsEnabled={hapticsEnabled}
+        onToggleHaptics={handleToggleHaptics}
+        showEvalBar={showEvalBar}
+        onToggleEvalBar={handleToggleEvalBar}
+        confirmMoveEnabled={confirmMoveEnabled}
+        onToggleConfirmMove={handleToggleConfirmMove}
+        timeLimit={timeLimit}
+        onTimeLimitChange={setTimeLimit}
+        chosenSide={chosenSide}
+        onChosenSideChange={setChosenSide}
+        difficulty={difficulty}
+        onDifficultyChange={setDifficulty}
+        onReplayTourGuide={() => {
+          setShowSettingsModal(false);
+          setTimeout(() => setShowTourGuide(true), 200);
+        }}
+        onApplyAndStartGame={() => {
+          setShowSettingsModal(false);
+          requestNewGame(difficulty, timeLimit, chosenSide);
+        }}
+      />
 
       {/* Analysis Loading Overlay */}
       {isAnalyzing && (
@@ -2506,16 +2511,67 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Review Modal */}
-      {showReviewModal && reviewData && (
-        <ReviewModal
-          reviewData={reviewData}
-          playerColor={reviewPlayerColor}
-          pieceTheme={pieceTheme}
-          boardTheme={boardTheme}
-          onClose={() => setShowReviewModal(false)}
-        />
-      )}
+      {/* Lazy-loaded Modals (chunks fetched only when opened) */}
+      <Suspense fallback={null}>
+        {showReviewModal && reviewData && (
+          <ReviewModal
+            reviewData={reviewData}
+            playerColor={reviewPlayerColor}
+            pieceTheme={pieceTheme}
+            boardTheme={boardTheme}
+            onClose={() => setShowReviewModal(false)}
+          />
+        )}
+
+        {showOpeningModal && (
+          <OpeningGuideModal
+            isOpen={showOpeningModal}
+            onClose={() => setShowOpeningModal(false)}
+            onStartGuidedOpening={handleStartGuidedOpening}
+            currentOpening={currentOpening}
+          />
+        )}
+
+        {showProfileModal && (
+          <ProfileModal
+            isOpen={showProfileModal}
+            onClose={() => setShowProfileModal(false)}
+            profile={userProfile}
+            onUpdateProfile={setUserProfile}
+            onSelectLevelToPlay={(lvl) => {
+              setDifficulty(lvl as DifficultyLevel);
+              requestNewGame(lvl as DifficultyLevel);
+            }}
+            onOpenRanking={() => setShowRankingModal(true)}
+            onOpenArchive={() => {
+              setGameArchives(loadGameArchive());
+              setShowArchiveModal(true);
+            }}
+          />
+        )}
+
+        {showArchiveModal && (
+          <GameArchiveModal
+            isOpen={showArchiveModal}
+            onClose={() => setShowArchiveModal(false)}
+            archives={gameArchives}
+            onAnalyzeGame={(archived) =>
+              runMovesReview(archived.moves, archived.playerColor, archived)
+            }
+            onDeleteGame={(id) => setGameArchives(deleteArchivedGame(id))}
+            onImportAndReview={handleImportAndReview}
+            onImportToBoard={handleImportToBoard}
+          />
+        )}
+
+        {showRankingModal && (
+          <RankingModal
+            isOpen={showRankingModal}
+            onClose={() => setShowRankingModal(false)}
+            currentUser={userProfile}
+          />
+        )}
+      </Suspense>
 
       {/* Resign / New Game Safety Confirmation Modal */}
       {pendingConfirmAction && (
@@ -2582,14 +2638,6 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Opening Guide Modal */}
-      <OpeningGuideModal
-        isOpen={showOpeningModal}
-        onClose={() => setShowOpeningModal(false)}
-        onStartGuidedOpening={handleStartGuidedOpening}
-        currentOpening={currentOpening}
-      />
-
       {/* App Exit Confirmation Modal */}
       {showExitConfirm && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
@@ -2626,43 +2674,11 @@ export const App: React.FC = () => {
           </div>
         </div>
       )}
+
       {/* Interactive Feature Tour Guide */}
       <FeatureTourGuide
         isOpen={showTourGuide}
         onClose={() => setShowTourGuide(false)}
-      />
-
-      {/* User Profile Modal */}
-      <ProfileModal
-        isOpen={showProfileModal}
-        onClose={() => setShowProfileModal(false)}
-        profile={userProfile}
-        onUpdateProfile={setUserProfile}
-        onSelectLevelToPlay={(lvl) => {
-          setDifficulty(lvl as DifficultyLevel);
-          requestNewGame(lvl as DifficultyLevel);
-        }}
-        onOpenRanking={() => setShowRankingModal(true)}
-        onOpenArchive={() => {
-          setGameArchives(loadGameArchive());
-          setShowArchiveModal(true);
-        }}
-      />
-
-      {/* Game Archive Modal */}
-      <GameArchiveModal
-        isOpen={showArchiveModal}
-        onClose={() => setShowArchiveModal(false)}
-        archives={gameArchives}
-        onAnalyzeGame={(archived) => runMovesReview(archived.moves, archived.playerColor)}
-        onDeleteGame={(id) => setGameArchives(deleteArchivedGame(id))}
-      />
-
-      {/* Rankings / Leaderboard Modal */}
-      <RankingModal
-        isOpen={showRankingModal}
-        onClose={() => setShowRankingModal(false)}
-        currentUser={userProfile}
       />
     </div>
   );

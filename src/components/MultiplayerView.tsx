@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Chess } from 'chess.js';
 import {
   Users,
@@ -16,8 +16,9 @@ import {
   TrendingUp,
   Clock,
   RefreshCw,
+  ShieldCheck,
 } from 'lucide-react';
-import { ChessBoard } from './ChessBoard';
+import { ChessBoard, PremoveData } from './ChessBoard';
 import { AvatarIcon } from './AvatarIcon';
 import { UserProfile } from '../types/profile';
 import {
@@ -32,6 +33,8 @@ import {
   MultiplayerGameData,
   MultiplayerPlayer,
   MultiplayerMove,
+  MultiplayerEmojiId,
+  MultiplayerReaction,
 } from '../types/multiplayer';
 import {
   createFriendRoom,
@@ -46,6 +49,7 @@ import {
   requestMultiplayerRematch,
   declineMultiplayerRematch,
   markPlayerLeftPostGame,
+  sendMultiplayerReaction,
   getInitialClockMs,
 } from '../services/multiplayerService';
 import {
@@ -56,10 +60,25 @@ import {
 import { getOpeningFromMoves } from '../data/openings';
 import { soundManager } from '../utils/audio';
 
+const PVP_EMOJI_STAMPS: {
+  id: MultiplayerEmojiId;
+  emoji: string;
+  label: string;
+  bubbleText: string;
+}[] = [
+  { id: 'hello', emoji: '👋', label: '인사', bubbleText: '👋 안녕하세요!' },
+  { id: 'nice', emoji: '👏', label: '명수!', bubbleText: '👏 좋은 수네요!' },
+  { id: 'thinking', emoji: '🤔', label: '장고', bubbleText: '🤔 잠시 생각 중...' },
+  { id: 'oops', emoji: '😅', label: '실수', bubbleText: '😅 앗, 실수!' },
+  { id: 'gg', emoji: '🤝', label: '수고', bubbleText: '🤝 수고하셨습니다!' },
+];
+
 interface MultiplayerViewProps {
   currentUser: UserProfile;
   pieceTheme: PieceTheme;
   boardTheme: BoardTheme;
+  confirmMoveEnabled?: boolean;
+  onToggleConfirmMove?: (enabled: boolean) => void;
   onBackToPlay?: () => void;
   onProfileUpdated?: (updated: UserProfile) => void;
   onArchiveSaved?: () => void;
@@ -114,6 +133,8 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
   currentUser,
   pieceTheme,
   boardTheme,
+  confirmMoveEnabled = false,
+  onToggleConfirmMove,
   onBackToPlay,
   onProfileUpdated,
   onArchiveSaved,
@@ -140,6 +161,12 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [liveClockTick, setLiveClockTick] = useState<number>(Date.now());
   const [onlineRatingDelta, setOnlineRatingDelta] = useState<number | null>(null);
+
+  // Premove & Quick Emoji Stamps State
+  const [premove, setPremove] = useState<PremoveData | null>(null);
+  const [activeReaction, setActiveReaction] = useState<MultiplayerReaction | null>(null);
+  const [emojiCooldown, setEmojiCooldown] = useState<boolean>(false);
+  const lastSeenReactionAtRef = useRef<number>(0);
 
   // Confirm Dialogs ('resign' | 'local_draw' | null)
   const [confirmModal, setConfirmModal] = useState<'resign' | 'local_draw' | null>(null);
@@ -774,14 +801,82 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     }
   };
 
-  // Universal Board Move Handler
-  const handleBoardMove = (from: string, to: string, promotion?: string): boolean => {
+  // Universal Board Move Handler (referentially stable so ChessBoard memo avoids clock tick re-renders)
+  const latestBoardMoveImplRef = useRef<(from: string, to: string, promotion?: string) => boolean>(
+    () => false
+  );
+  latestBoardMoveImplRef.current = (from: string, to: string, promotion?: string): boolean => {
     if (isLocalMode) {
       return handleLocalMove(from, to, promotion);
     } else {
       handleOnlineMove(from, to, promotion);
       return true;
     }
+  };
+
+  const handleBoardMove = useCallback((from: string, to: string, promotion?: string): boolean => {
+    return latestBoardMoveImplRef.current(from, to, promotion);
+  }, []);
+
+  // Reset premove & emoji reaction when switching games
+  useEffect(() => {
+    setPremove(null);
+    setActiveReaction(null);
+  }, [activeGameId, isLocalMode]);
+
+  // Auto-execute queued premove when our turn arrives in Online 1:1 PvP
+  useEffect(() => {
+    if (isLocalMode || !premove || !gameData || !myOnlineColor) return;
+    if (gameData.status !== 'playing') {
+      setPremove(null);
+      return;
+    }
+    if (gameData.currentTurn !== myOnlineColor) return;
+
+    const queued = premove;
+    setPremove(null);
+    try {
+      const checkChess = new Chess(gameData.fen);
+      const legal = checkChess.move({
+        from: queued.from,
+        to: queued.to,
+        promotion: queued.promotion || 'q',
+      });
+      if (legal) {
+        handleOnlineMove(queued.from, queued.to, queued.promotion);
+      }
+    } catch {
+      // Illegal premove in new position -> silently canceled
+    }
+  }, [isLocalMode, premove, gameData?.fen, gameData?.status, gameData?.currentTurn, myOnlineColor]);
+
+  // Listen to incoming/outgoing Quick Emoji Stamps on gameData.lastReaction
+  useEffect(() => {
+    const r = gameData?.lastReaction;
+    if (!r || !r.sentAt) return;
+    if (r.sentAt <= lastSeenReactionAtRef.current) return;
+    if (Date.now() - r.sentAt > 15000) {
+      lastSeenReactionAtRef.current = r.sentAt;
+      return;
+    }
+
+    lastSeenReactionAtRef.current = r.sentAt;
+    setActiveReaction(r);
+    if (r.senderColor !== myOnlineColor) {
+      soundManager.move();
+    }
+
+    const timer = window.setTimeout(() => {
+      setActiveReaction((curr) => (curr?.sentAt === r.sentAt ? null : curr));
+    }, 3800);
+    return () => clearTimeout(timer);
+  }, [gameData?.lastReaction?.sentAt, myOnlineColor]);
+
+  const handleSendEmoji = async (emojiId: MultiplayerEmojiId) => {
+    if (isLocalMode || !activeGameId || !myOnlineColor || emojiCooldown) return;
+    setEmojiCooldown(true);
+    window.setTimeout(() => setEmojiCooldown(false), 1800);
+    await sendMultiplayerReaction(activeGameId, myOnlineColor, emojiId);
   };
 
   // Exit Game back to Lobby
@@ -801,6 +896,8 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     if (unsubscribeGameRef.current) unsubscribeGameRef.current();
     setActiveGameId(null);
     setGameData(null);
+    setPremove(null);
+    setActiveReaction(null);
     setIsLocalMode(false);
     setOnlineRatingDelta(null);
     setConfirmModal(null);
@@ -1187,10 +1284,29 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
 
   const totalMoveCount = isLocalMode ? localMoves.length : gameData?.moves.length || 0;
 
+  const opponentStamp =
+    !isLocalMode && activeReaction && activeReaction.senderColor === opponentOnlineColor
+      ? PVP_EMOJI_STAMPS.find((s) => s.id === activeReaction.emojiId)
+      : null;
+
+  const myStamp =
+    !isLocalMode && activeReaction && activeReaction.senderColor === myOnlineColor
+      ? PVP_EMOJI_STAMPS.find((s) => s.id === activeReaction.emojiId)
+      : null;
+
   return (
     <div className="flex-1 flex flex-col p-2.5 sm:p-3 space-y-2 max-w-md mx-auto w-full select-none overflow-y-auto">
       {/* Top Bar: Opponent Player Info (or Black in Local) */}
-      <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-between gap-2 shrink-0">
+      <div className="relative p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-between gap-2 shrink-0">
+        {opponentStamp && (
+          <div
+            data-testid="pvp-opponent-reaction-bubble"
+            className="absolute right-3 -bottom-3.5 z-40 px-2.5 py-1 rounded-full bg-amber-400 text-zinc-950 text-[11px] font-black shadow-lg border border-amber-200 animate-bounce"
+          >
+            {opponentStamp.bubbleText}
+          </div>
+        )}
+
         <div className="flex items-center gap-2 min-w-0">
           <AvatarIcon
             avatar={isLocalMode ? 'king' : opponentPlayer?.avatar || 'knight'}
@@ -1281,6 +1397,11 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
             orientation={orientation}
             onMove={handleBoardMove}
             interactive={isMyTurn && !isGameOver}
+            allowPremove={!isLocalMode && !isGameOver && !isMyTurn && !!myOnlineColor}
+            playerColor={myOnlineColor || undefined}
+            premove={premove}
+            onPremoveChange={setPremove}
+            confirmMoveEnabled={confirmMoveEnabled}
             lastMove={lastMove}
             pieceTheme={pieceTheme}
             boardTheme={boardTheme}
@@ -1401,7 +1522,16 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
       </div>
 
       {/* Bottom Bar: Current Player Info (or White in Local) */}
-      <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-between gap-2 shrink-0">
+      <div className="relative p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-between gap-2 shrink-0">
+        {myStamp && (
+          <div
+            data-testid="pvp-my-reaction-bubble"
+            className="absolute left-3 -top-3.5 z-40 px-2.5 py-1 rounded-full bg-emerald-400 text-zinc-950 text-[11px] font-black shadow-lg border border-emerald-200 animate-bounce"
+          >
+            {myStamp.bubbleText}
+          </div>
+        )}
+
         <div className="flex items-center gap-2 min-w-0">
           <AvatarIcon
             avatar={isLocalMode ? 'king' : playerInfo.avatar}
@@ -1421,11 +1551,30 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          {onToggleConfirmMove && !isGameOver && (
+            <button
+              type="button"
+              data-testid="pvp-confirm-move-toggle"
+              onClick={() => onToggleConfirmMove(!confirmMoveEnabled)}
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 transition-all ${
+                confirmMoveEnabled
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50'
+                  : 'bg-zinc-850 text-zinc-400 border-zinc-700 hover:text-zinc-200'
+              }`}
+              title="터치 미스 방지를 위한 착수 확정 버튼 사용"
+            >
+              <ShieldCheck className="w-3 h-3" />
+              <span>착수확인 {confirmMoveEnabled ? 'ON' : 'OFF'}</span>
+            </button>
+          )}
+
           {!isGameOver && (
             <span
               className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                 isMyTurn
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
+                  : premove
+                  ? 'bg-sky-500/20 text-sky-300 border-sky-400/50'
                   : 'bg-zinc-800 text-zinc-400 border-zinc-700'
               }`}
             >
@@ -1435,6 +1584,8 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
                   : '흑 착수'
                 : isMyTurn
                 ? '내 차례'
+                : premove
+                ? '⚡ 예약됨'
                 : '상대 차례'}
             </span>
           )}
@@ -1452,6 +1603,29 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Quick Emoji Stamp Bar (Online 1:1 Only) */}
+      {!isLocalMode && activeGameId && (
+        <div
+          data-testid="pvp-emoji-bar"
+          className="grid grid-cols-5 gap-1 shrink-0"
+        >
+          {PVP_EMOJI_STAMPS.map((stamp) => (
+            <button
+              key={stamp.id}
+              type="button"
+              data-testid={`pvp-emoji-btn-${stamp.id}`}
+              disabled={emojiCooldown}
+              onClick={() => handleSendEmoji(stamp.id)}
+              className="py-1.5 px-1 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 disabled:opacity-50 border border-zinc-800 hover:border-zinc-700 text-[11px] font-bold text-zinc-200 flex items-center justify-center gap-1 transition-all active:scale-95"
+              title={stamp.bubbleText}
+            >
+              <span>{stamp.emoji}</span>
+              <span className="truncate">{stamp.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Action Controls */}
       <div className="grid grid-cols-3 gap-1.5 pt-0.5 shrink-0">
