@@ -27,6 +27,8 @@ interface ChessBoardProps {
   customKingCheckSquare?: string | null;
   pieceTheme?: PieceTheme;
   boardTheme?: BoardTheme;
+  className?: string;
+  style?: React.CSSProperties;
 }
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -102,6 +104,8 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   customKingCheckSquare,
   pieceTheme = 'metal',
   boardTheme = 'marble',
+  className,
+  style,
 }) => {
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [pendingPromotion, setPendingPromotion] = useState<{ from: string; to: string } | null>(null);
@@ -190,11 +194,12 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   return (
     <div
-      className="relative w-full max-w-[380px] aspect-square mx-auto select-none rounded-xl overflow-hidden shadow-2xl border-2 border-zinc-800 bg-zinc-900 shrink-0"
+      className={`relative aspect-square mx-auto select-none rounded-xl overflow-hidden shadow-2xl border-2 border-zinc-800 bg-zinc-900 shrink-0 ${className || 'w-full max-w-[380px]'}`}
       style={{
         backgroundImage: isTexturedBoard ? `url(/boards/${boardTheme}.png)` : undefined,
         backgroundSize: '100% 100%',
         backgroundRepeat: 'no-repeat',
+        ...style,
       }}
     >
       <ChessPieceDefs />

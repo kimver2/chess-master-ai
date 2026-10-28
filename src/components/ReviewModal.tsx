@@ -269,242 +269,246 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         </button>
       </div>
 
-      {/* Accuracy & Stats Cards */}
-      <div className="grid grid-cols-2 gap-2 p-3 bg-zinc-900 border-b border-zinc-800 shrink-0">
-        <div
-          className={`p-2.5 rounded-xl border transition-all ${
-            playerColor === 'w'
-              ? 'bg-zinc-800/90 border-amber-500/40 ring-1 ring-amber-500/20'
-              : 'bg-zinc-800/50 border-zinc-700/40 opacity-75'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-zinc-300 font-semibold flex items-center gap-1.5">
-              백 (White)
-              {playerColor === 'w' && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-                  나
-                </span>
-              )}
-            </span>
-            <span className="text-sm font-extrabold text-amber-400">
-              {reviewData.whiteStats.accuracy}%
-            </span>
-          </div>
-          <div className="flex justify-between text-[10px] text-zinc-400">
-            <span>🌟 {reviewData.whiteStats.best}</span>
-            <span>👍 {reviewData.whiteStats.good}</span>
-            <span>⚠️ {reviewData.whiteStats.mistake}</span>
-            <span className="text-rose-400 font-bold">❌ {reviewData.whiteStats.blunder}</span>
-          </div>
-        </div>
-
-        <div
-          className={`p-2.5 rounded-xl border transition-all ${
-            playerColor === 'b'
-              ? 'bg-zinc-800/90 border-sky-500/40 ring-1 ring-sky-500/20'
-              : 'bg-zinc-800/50 border-zinc-700/40 opacity-75'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-zinc-300 font-semibold flex items-center gap-1.5">
-              흑 (Black)
-              {playerColor === 'b' && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
-                  나
-                </span>
-              )}
-            </span>
-            <span className="text-sm font-extrabold text-sky-400">
-              {reviewData.blackStats.accuracy}%
-            </span>
-          </div>
-          <div className="flex justify-between text-[10px] text-zinc-400">
-            <span>🌟 {reviewData.blackStats.best}</span>
-            <span>👍 {reviewData.blackStats.good}</span>
-            <span>⚠️ {reviewData.blackStats.mistake}</span>
-            <span className="text-rose-400 font-bold">❌ {reviewData.blackStats.blunder}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Review Filter Mode Bar: '내 수만 보기 (기본)' vs '전체 수 보기' */}
-      <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900/90 border-b border-zinc-800 shrink-0">
-        <div className="flex items-center gap-1.5 text-xs text-zinc-300">
-          <span className="w-2 h-2 rounded-full bg-amber-400" />
-          <span className="font-semibold">
-            {filterPlayerOnly ? '내가 둔 수만 복기' : '전체 수 복기'}
-          </span>
-          <span className="text-[11px] text-zinc-400">({displayedMoves.length}수)</span>
-        </div>
-        <div className="flex items-center bg-zinc-800 p-0.5 rounded-lg border border-zinc-700 text-xs">
-          <button
-            type="button"
-            onClick={() => handleToggleFilter(true)}
-            className={`px-2.5 py-1 rounded-md font-bold transition-all ${
-              filterPlayerOnly
-                ? 'bg-amber-500 text-zinc-950 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200'
+      {/* Scrollable Middle Content: Stats, Board, and Move Analysis */}
+      <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
+        {/* Accuracy & Stats Cards */}
+        <div className="grid grid-cols-2 gap-2 p-3 bg-zinc-900 border-b border-zinc-800 shrink-0">
+          <div
+            className={`p-2.5 rounded-xl border transition-all ${
+              playerColor === 'w'
+                ? 'bg-zinc-800/90 border-amber-500/40 ring-1 ring-amber-500/20'
+                : 'bg-zinc-800/50 border-zinc-700/40 opacity-75'
             }`}
           >
-            👤 내 수만 보기
-          </button>
-          <button
-            type="button"
-            onClick={() => handleToggleFilter(false)}
-            className={`px-2.5 py-1 rounded-md font-bold transition-all ${
-              !filterPlayerOnly
-                ? 'bg-zinc-700 text-zinc-100 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            전체 수
-          </button>
-        </div>
-      </div>
-
-      {/* Chess Board Area with Dual Move Color Comparison */}
-      <div className="p-2 flex-1 flex flex-col items-center justify-center min-h-0 overflow-hidden">
-        {/* Dynamic Board Color Legend */}
-        {currentMove && hasBestMove && (
-          <div className="flex items-center justify-between px-2.5 py-1 bg-zinc-900/90 rounded-lg border border-zinc-800 text-[11px] mb-1.5 w-full max-w-[380px] shrink-0">
-            <div className="flex items-center gap-2.5">
-              <span className="flex items-center gap-1 font-bold text-emerald-400">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block shadow-xs shadow-emerald-500/60" />
-                최적의 수 ({currentMove.bestMoveSan})
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-zinc-300 font-semibold flex items-center gap-1.5">
+                백 (White)
+                {playerColor === 'w' && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                    나
+                  </span>
+                )}
               </span>
-              <span className="text-zinc-600 font-bold">vs</span>
-              <span className="flex items-center gap-1 font-bold" style={{ color: myArrowColor }}>
-                <span
-                  className="w-2.5 h-2.5 rounded-full inline-block shadow-xs"
-                  style={{ backgroundColor: myArrowColor }}
-                />
-                내가 둔 수 ({currentMove.san})
+              <span className="text-sm font-extrabold text-amber-400">
+                {reviewData.whiteStats.accuracy}%
               </span>
             </div>
-            <span className="text-[10px] text-zinc-400 font-medium hidden sm:inline">체스판 위 색상 비교</span>
+            <div className="flex justify-between text-[10px] text-zinc-400">
+              <span>🌟 {reviewData.whiteStats.best}</span>
+              <span>👍 {reviewData.whiteStats.good}</span>
+              <span>⚠️ {reviewData.whiteStats.mistake}</span>
+              <span className="text-rose-400 font-bold">❌ {reviewData.whiteStats.blunder}</span>
+            </div>
+          </div>
+
+          <div
+            className={`p-2.5 rounded-xl border transition-all ${
+              playerColor === 'b'
+                ? 'bg-zinc-800/90 border-sky-500/40 ring-1 ring-sky-500/20'
+                : 'bg-zinc-800/50 border-zinc-700/40 opacity-75'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-zinc-300 font-semibold flex items-center gap-1.5">
+                흑 (Black)
+                {playerColor === 'b' && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+                    나
+                  </span>
+                )}
+              </span>
+              <span className="text-sm font-extrabold text-sky-400">
+                {reviewData.blackStats.accuracy}%
+              </span>
+            </div>
+            <div className="flex justify-between text-[10px] text-zinc-400">
+              <span>🌟 {reviewData.blackStats.best}</span>
+              <span>👍 {reviewData.blackStats.good}</span>
+              <span>⚠️ {reviewData.blackStats.mistake}</span>
+              <span className="text-rose-400 font-bold">❌ {reviewData.blackStats.blunder}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Review Filter Mode Bar: '내 수만 보기 (기본)' vs '전체 수 보기' */}
+        <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900/90 border-b border-zinc-800 shrink-0">
+          <div className="flex items-center gap-1.5 text-xs text-zinc-300">
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+            <span className="font-semibold">
+              {filterPlayerOnly ? '내가 둔 수만 복기' : '전체 수 복기'}
+            </span>
+            <span className="text-[11px] text-zinc-400">({displayedMoves.length}수)</span>
+          </div>
+          <div className="flex items-center bg-zinc-800 p-0.5 rounded-lg border border-zinc-700 text-xs">
+            <button
+              type="button"
+              onClick={() => handleToggleFilter(true)}
+              className={`px-2.5 py-1 rounded-md font-bold transition-all ${
+                filterPlayerOnly
+                  ? 'bg-amber-500 text-zinc-950 shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              👤 내 수만 보기
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleFilter(false)}
+              className={`px-2.5 py-1 rounded-md font-bold transition-all ${
+                !filterPlayerOnly
+                  ? 'bg-zinc-700 text-zinc-100 shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              전체 수
+            </button>
+          </div>
+        </div>
+
+        {/* Chess Board Area with Responsive Sizing */}
+        <div className="p-2 w-full flex flex-col items-center justify-center shrink-0">
+          {/* Dynamic Board Color Legend */}
+          {currentMove && hasBestMove && (
+            <div className="flex items-center justify-between px-2.5 py-1 bg-zinc-900/90 rounded-lg border border-zinc-800 text-[11px] mb-1.5 w-full max-w-[min(100%,min(42vh,360px))] shrink-0">
+              <div className="flex items-center gap-2.5">
+                <span className="flex items-center gap-1 font-bold text-emerald-400">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block shadow-xs shadow-emerald-500/60" />
+                  최적의 수 ({currentMove.bestMoveSan})
+                </span>
+                <span className="text-zinc-600 font-bold">vs</span>
+                <span className="flex items-center gap-1 font-bold" style={{ color: myArrowColor }}>
+                  <span
+                    className="w-2.5 h-2.5 rounded-full inline-block shadow-xs"
+                    style={{ backgroundColor: myArrowColor }}
+                  />
+                  내가 둔 수 ({currentMove.san})
+                </span>
+              </div>
+              <span className="text-[10px] text-zinc-400 font-medium hidden sm:inline">체스판 위 색상 비교</span>
+            </div>
+          )}
+
+          <ChessBoard
+            chess={currentChess}
+            orientation={playerColor === 'b' ? 'black' : 'white'}
+            interactive={false}
+            highlightSquares={highlights}
+            squareBadges={squareBadges}
+            arrows={arrows}
+            pieceTheme={pieceTheme}
+            boardTheme={boardTheme}
+            className="w-full max-w-[min(100%,min(42vh,360px))]"
+          />
+        </div>
+
+        {/* Move Info & Comparison Controls */}
+        {currentMove && (
+          <div className="px-3 pb-3 space-y-2 shrink-0">
+            {/* Tactical / Missed Check Callout */}
+            {currentMove.missedCheck && (
+              <div className="p-2.5 rounded-xl bg-amber-950/70 border border-amber-500/50 flex items-start gap-2 animate-pulse">
+                <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-amber-200">놓친 체크 기회 포착!</div>
+                  <div className="text-[11px] text-amber-300/90 leading-relaxed">
+                    이번 수 대신 상대 킹을 체크할 수 있는 기회가 있었습니다.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Better Move Example Toggle Bar (Shows Better Move First for Mistake/Blunder) */}
+            {hasBestMove && (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 p-1 bg-zinc-900 border border-zinc-800 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setShowBestMove(true)}
+                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                      showBestMove
+                        ? 'bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400/60'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
+                    <span>💡 더 좋은 수 예시 ({currentMove.bestMoveSan})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowBestMove(false)}
+                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                      !showBestMove
+                        ? 'bg-zinc-800 text-amber-300 shadow-md border border-amber-500/40 ring-1 ring-amber-500/30'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <span>내가 둔 수 ({currentMove.san})</span>
+                  </button>
+                </div>
+
+                {/* Informational Banner depending on active view */}
+                {showBestMove ? (
+                  <div className="p-2 rounded-xl bg-emerald-950/60 border border-emerald-500/40 flex items-center justify-between text-xs text-emerald-200">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span className="text-[11px]">
+                        추천 수 <strong>{currentMove.bestMoveSan}</strong>을(를) 두었을 때의 보드 상황입니다.
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setShowBestMove(false)}
+                      className="text-[11px] underline text-emerald-300 font-bold shrink-0 ml-2"
+                    >
+                      내 착수 보기
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-2 rounded-xl bg-zinc-850 border border-zinc-700/60 flex items-center justify-between text-xs text-zinc-300">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span className="text-[11px]">
+                        실제 둔 수: <strong>{currentMove.san}</strong> ({currentMove.quality === 'blunder' ? '치명적 악수' : currentMove.quality === 'mistake' ? '실수' : '아쉬운 수'})
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setShowBestMove(true)}
+                      className="text-[11px] text-emerald-400 font-bold shrink-0 ml-2 underline"
+                    >
+                      더 좋은 수 보기
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Move Detail Analysis Card */}
+            <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm font-bold text-zinc-200">
+                    {currentMove.moveNumber}. {currentMove.color === 'b' && '...'}
+                    {currentMove.san}
+                  </span>
+                  {renderQualityBadge(currentMove.quality)}
+                </div>
+                <span className="font-mono text-xs font-bold text-zinc-400">
+                  평가치: {formatScore(currentMove.scoreAfter)}
+                </span>
+              </div>
+
+              <p className="text-xs text-zinc-300 leading-relaxed bg-zinc-800/60 p-2 rounded-lg">
+                {currentMove.commentary}
+              </p>
+            </div>
           </div>
         )}
-
-        <ChessBoard
-          chess={currentChess}
-          orientation={playerColor === 'b' ? 'black' : 'white'}
-          interactive={false}
-          highlightSquares={highlights}
-          squareBadges={squareBadges}
-          arrows={arrows}
-          pieceTheme={pieceTheme}
-          boardTheme={boardTheme}
-        />
       </div>
-
-      {/* Move Info & Comparison Controls */}
-      {currentMove && (
-        <div className="px-3 pb-2 space-y-2 shrink-0">
-          {/* Tactical / Missed Check Callout */}
-          {currentMove.missedCheck && (
-            <div className="p-2.5 rounded-xl bg-amber-950/70 border border-amber-500/50 flex items-start gap-2 animate-pulse">
-              <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-              <div>
-                <div className="text-xs font-bold text-amber-200">놓친 체크 기회 포착!</div>
-                <div className="text-[11px] text-amber-300/90 leading-relaxed">
-                  이번 수 대신 상대 킹을 체크할 수 있는 기회가 있었습니다.
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Better Move Example Toggle Bar (Shows Better Move First for Mistake/Blunder) */}
-          {hasBestMove && (
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 p-1 bg-zinc-900 border border-zinc-800 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => setShowBestMove(true)}
-                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                    showBestMove
-                      ? 'bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400/60'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
-                  <span>💡 더 좋은 수 예시 ({currentMove.bestMoveSan})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowBestMove(false)}
-                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                    !showBestMove
-                      ? 'bg-zinc-800 text-amber-300 shadow-md border border-amber-500/40 ring-1 ring-amber-500/30'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  <span>내가 둔 수 ({currentMove.san})</span>
-                </button>
-              </div>
-
-              {/* Informational Banner depending on active view */}
-              {showBestMove ? (
-                <div className="p-2 rounded-xl bg-emerald-950/60 border border-emerald-500/40 flex items-center justify-between text-xs text-emerald-200">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span className="text-[11px]">
-                      추천 수 <strong>{currentMove.bestMoveSan}</strong>을(를) 두었을 때의 보드 상황입니다.
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setShowBestMove(false)}
-                    className="text-[11px] underline text-emerald-300 font-bold shrink-0 ml-2"
-                  >
-                    내 착수 보기
-                  </button>
-                </div>
-              ) : (
-                <div className="p-2 rounded-xl bg-zinc-850 border border-zinc-700/60 flex items-center justify-between text-xs text-zinc-300">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span className="text-[11px]">
-                      실제 둔 수: <strong>{currentMove.san}</strong> ({currentMove.quality === 'blunder' ? '치명적 악수' : currentMove.quality === 'mistake' ? '실수' : '아쉬운 수'})
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setShowBestMove(true)}
-                    className="text-[11px] text-emerald-400 font-bold shrink-0 ml-2 underline"
-                  >
-                    더 좋은 수 보기
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Move Detail Analysis Card */}
-          <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-sm font-bold text-zinc-200">
-                  {currentMove.moveNumber}. {currentMove.color === 'b' && '...'}
-                  {currentMove.san}
-                </span>
-                {renderQualityBadge(currentMove.quality)}
-              </div>
-              <span className="font-mono text-xs font-bold text-zinc-400">
-                평가치: {formatScore(currentMove.scoreAfter)}
-              </span>
-            </div>
-
-            <p className="text-xs text-zinc-300 leading-relaxed bg-zinc-800/60 p-2 rounded-lg">
-              {currentMove.commentary}
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Navigation Controls */}
       <div
-        className="shrink-0 bg-zinc-900 border-t border-zinc-800 p-3 mt-auto"
+        className="shrink-0 bg-zinc-900 border-t border-zinc-800 p-2.5 sm:p-3 mt-auto"
         style={{
-          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 14px)',
+          paddingBottom: 'clamp(8px, env(safe-area-inset-bottom, 8px), 20px)',
         }}
       >
         <div className="flex items-center justify-between gap-2 mb-2">

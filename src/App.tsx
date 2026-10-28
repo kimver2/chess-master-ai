@@ -1161,7 +1161,7 @@ export const App: React.FC = () => {
       {/* Main Tab Content */}
       <main className="flex-1 flex flex-col overflow-y-auto">
         {activeTab === 'play' ? (
-          <div className="p-3 flex flex-col space-y-3 min-h-full">
+          <div className="p-2 sm:p-3 pb-6 flex flex-col space-y-1.5 sm:space-y-2.5 min-h-full">
             {/* Opponent (AI) Bar */}
             <div data-tour="opponent-bar" className="w-full shrink-0">
               <PlayerBar
@@ -1296,7 +1296,7 @@ export const App: React.FC = () => {
             )}
 
             {/* Chess Board View with Eval Bar (크기 고정 및 축소 방지) */}
-            <div data-tour="chessboard" className="relative flex items-stretch justify-center gap-2 w-full shrink-0 my-2">
+            <div data-tour="chessboard" className="relative flex items-stretch justify-center gap-1.5 sm:gap-2 w-full shrink-0 my-0.5 sm:my-1.5">
               {showEvalBar && (
                 <div className="self-stretch flex items-stretch py-0.5 shrink-0">
                   <EvalBar
@@ -1307,8 +1307,9 @@ export const App: React.FC = () => {
                 </div>
               )}
 
-              <div className="relative w-full max-w-[380px] flex items-center justify-center shrink-0">
+              <div className="relative w-full max-w-[min(100%,min(42vh,370px))] flex items-center justify-center shrink-0">
                 <ChessBoard
+                  className="w-full max-w-[min(100%,min(42vh,370px))]"
                   chess={displayChess}
                   orientation={playerColor === 'b' ? 'black' : 'white'}
                   onMove={handlePlayerMove}
@@ -1533,7 +1534,7 @@ export const App: React.FC = () => {
                     type="button"
                     onClick={handleRequestHint}
                     disabled={isGameOver || isAiThinking || isHintLoading || chess.turn() !== playerColor}
-                    className={`py-2 px-1 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 border transition-all ${
+                    className={`py-1.5 sm:py-2 px-1 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 border transition-all ${
                       activeHint
                         ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-sm shadow-emerald-950/30'
                         : 'bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-amber-300 border-zinc-800'
@@ -1552,7 +1553,7 @@ export const App: React.FC = () => {
                     type="button"
                     onClick={handleUndo}
                     disabled={isGameOver || isAiThinking || playedMoves.length < (playerColor === 'w' ? 2 : 3)}
-                    className="py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-zinc-300 text-[11px] font-semibold flex items-center justify-center gap-1 border border-zinc-800"
+                    className="py-1.5 sm:py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-zinc-300 text-[11px] font-semibold flex items-center justify-center gap-1 border border-zinc-800"
                     title="한 수 물리기"
                   >
                     <RotateCcw className="w-3.5 h-3.5 text-zinc-400" />
@@ -1563,7 +1564,7 @@ export const App: React.FC = () => {
                     type="button"
                     onClick={handleResign}
                     disabled={isGameOver}
-                    className="py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-zinc-300 text-[11px] font-semibold flex items-center justify-center gap-1 border border-zinc-800"
+                    className="py-1.5 sm:py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-zinc-300 text-[11px] font-semibold flex items-center justify-center gap-1 border border-zinc-800"
                     title="기권하기"
                   >
                     <Flag className="w-3.5 h-3.5 text-rose-400" />
@@ -1573,7 +1574,7 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => startNewGame()}
-                    className="py-2 px-1 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-98 text-zinc-950 text-[11px] font-black flex items-center justify-center gap-1 shadow-sm"
+                    className="py-1.5 sm:py-2 px-1 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-98 text-zinc-950 text-[11px] font-black flex items-center justify-center gap-1 shadow-sm"
                     title="새 게임 시작"
                   >
                     <Play className="w-3.5 h-3.5 fill-zinc-950" />
@@ -1609,9 +1610,9 @@ export const App: React.FC = () => {
       {/* Bottom Tab Bar */}
       <footer
         data-tour="bottom-tabs"
-        className="grid grid-cols-3 border-t border-zinc-800/80 bg-zinc-900/95 pt-2 px-3 backdrop-blur-md shrink-0"
+        className="grid grid-cols-3 border-t border-zinc-800/80 bg-zinc-900/95 pt-1.5 px-2 sm:px-3 backdrop-blur-md shrink-0"
         style={{
-          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 14px)',
+          paddingBottom: 'clamp(6px, env(safe-area-inset-bottom, 6px), 16px)',
         }}
       >
         <button
@@ -1620,8 +1621,8 @@ export const App: React.FC = () => {
             activeTab === 'play' ? 'text-amber-400 font-bold' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <Swords className="w-5 h-5 mb-0.5" />
-          <span className="text-[11px]">체스 대국</span>
+          <Swords className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" />
+          <span className="text-[10px] sm:text-[11px]">체스 대국</span>
         </button>
 
         <button
@@ -1630,8 +1631,8 @@ export const App: React.FC = () => {
             activeTab === 'puzzle' ? 'text-amber-400 font-bold' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <Sparkles className="w-5 h-5 mb-0.5" />
-          <span className="text-[11px]">전술 퍼즐</span>
+          <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" />
+          <span className="text-[10px] sm:text-[11px]">전술 퍼즐</span>
         </button>
 
         <button
@@ -1640,8 +1641,8 @@ export const App: React.FC = () => {
             activeTab === 'endgame' ? 'text-amber-400 font-bold' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <Trophy className="w-5 h-5 mb-0.5" />
-          <span className="text-[11px]">엔드게임 50</span>
+          <Trophy className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" />
+          <span className="text-[10px] sm:text-[11px]">엔드게임 50</span>
         </button>
       </footer>
 
