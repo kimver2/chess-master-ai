@@ -225,7 +225,8 @@ export const App: React.FC = () => {
   const [whiteTimeMs, setWhiteTimeMs] = useState<number | null>(initialTimeMs);
   const [blackTimeMs, setBlackTimeMs] = useState<number | null>(initialTimeMs);
 
-  // Game End State
+  // Game Start & End State
+  const [isGameStarted, setIsGameStarted] = useState<boolean>(false);
   const [isGameOver, setIsGameOver] = useState<boolean>(false);
   const [showGameOverModal, setShowGameOverModal] = useState<boolean>(false);
   const [gameResult, setGameResult] = useState<GameResult>('ongoing');
@@ -398,6 +399,7 @@ export const App: React.FC = () => {
 
       if (!restoredChess.isGameOver()) {
         const session = ++gameSessionRef.current;
+        setIsGameStarted(true);
         setDifficulty(saved.difficulty);
         setTimeLimit(saved.timeLimit);
         setChosenSide(saved.chosenSide);
@@ -664,9 +666,28 @@ export const App: React.FC = () => {
     });
   };
 
-  // Clock countdown interval
+  // Keep clocks and orientation preview synced with settings before the first game starts
   useEffect(() => {
-    if (activeTab !== 'play' || isGameOver || timeLimit === 'unlimited') return;
+    if (!isGameStarted && playedMoves.length === 0 && !isGameOver) {
+      const ms = timeLimit === '5m' ? 300000 : timeLimit === '10m' ? 600000 : null;
+      setWhiteTimeMs(ms);
+      setBlackTimeMs(ms);
+      if (chosenSide === 'white') setPlayerColor('w');
+      else if (chosenSide === 'black') setPlayerColor('b');
+    }
+  }, [isGameStarted, timeLimit, chosenSide, playedMoves.length, isGameOver]);
+
+  // Clock countdown interval (only ticks after '게임 시작' is pressed)
+  useEffect(() => {
+    if (
+      !isGameStarted ||
+      showTourGuide ||
+      activeTab !== 'play' ||
+      isGameOver ||
+      timeLimit === 'unlimited'
+    ) {
+      return;
+    }
 
     const interval = setInterval(() => {
       const turn = chess.turn();
@@ -698,7 +719,7 @@ export const App: React.FC = () => {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [activeTab, chess, isGameOver, timeLimit, playerColor]);
+  }, [isGameStarted, showTourGuide, activeTab, chess, isGameOver, timeLimit, playerColor]);
 
   const handleTimeout = (loserColor: PieceColor) => {
     gameSessionRef.current += 1;
@@ -754,7 +775,7 @@ export const App: React.FC = () => {
     if (isViewingHistory) {
       setViewPlyIndex(null);
     }
-    if (isGameOver || isAiThinking || isHintLoading || chess.turn() !== playerColor) return;
+    if (!isGameStarted || isGameOver || isAiThinking || isHintLoading || chess.turn() !== playerColor) return;
     const session = gameSessionRef.current;
     setIsHintLoading(true);
     try {
@@ -779,6 +800,7 @@ export const App: React.FC = () => {
     newSide = chosenSide
   ) => {
     clearActiveGame();
+    setIsGameStarted(true);
     setResumedBannerMessage(null);
     setPendingConfirmAction(null);
     const session = ++gameSessionRef.current;
@@ -844,6 +866,7 @@ export const App: React.FC = () => {
   // Start Guided Opening Game
   const handleStartGuidedOpening = (opening: ChessOpening) => {
     clearActiveGame();
+    setIsGameStarted(true);
     setResumedBannerMessage(null);
     const session = ++gameSessionRef.current;
     const side: PieceColor = opening.recommendedSide || 'w';
@@ -974,7 +997,7 @@ export const App: React.FC = () => {
       setViewPlyIndex(null);
       return;
     }
-    if (isGameOver || isAiThinking || chess.turn() !== playerColor) return;
+    if (!isGameStarted || isGameOver || isAiThinking || chess.turn() !== playerColor) return;
 
     const session = gameSessionRef.current;
     const fenBefore = chess.fen();
@@ -1241,7 +1264,7 @@ export const App: React.FC = () => {
 
   // Request Resign with confirmation modal
   const requestResign = () => {
-    if (isGameOver) return;
+    if (!isGameStarted || isGameOver) return;
     setPendingConfirmAction({ type: 'resign' });
   };
 
@@ -1541,7 +1564,7 @@ export const App: React.FC = () => {
                 color={aiColor}
                 timeRemainingMs={aiColor === 'w' ? whiteTimeMs : blackTimeMs}
                 timeLimit={timeLimit}
-                isActive={chess.turn() === aiColor && !isGameOver}
+                isActive={isGameStarted && chess.turn() === aiColor && !isGameOver}
                 capturedPieces={aiColor === 'w' ? matData.whiteCaptured : matData.blackCaptured}
                 materialDiff={aiColor === 'w' ? matData.whiteDiff : matData.blackDiff}
                 pieceTheme={pieceTheme}
@@ -1701,7 +1724,13 @@ export const App: React.FC = () => {
                   chess={displayChess}
                   orientation={playerColor === 'b' ? 'black' : 'white'}
                   onMove={handlePlayerMove}
-                  interactive={!isGameOver && !isAiThinking && chess.turn() === playerColor && !isViewingHistory}
+                  interactive={
+                    isGameStarted &&
+                    !isGameOver &&
+                    !isAiThinking &&
+                    chess.turn() === playerColor &&
+                    !isViewingHistory
+                  }
                   lastMove={displayLastMove}
                   highlightSquares={activeHighlights}
                   squareBadges={activeBadges}
@@ -1709,6 +1738,19 @@ export const App: React.FC = () => {
                   pieceTheme={pieceTheme}
                   boardTheme={boardTheme}
                 />
+
+                {/* Pre-Game Waiting Prompt Pill */}
+                {!isGameStarted && !isGameOver && (
+                  <button
+                    type="button"
+                    data-testid="board-start-prompt"
+                    onClick={() => startNewGame()}
+                    className="absolute top-2 left-1/2 -translate-x-1/2 z-20 px-3.5 py-1.5 rounded-full bg-zinc-900/95 hover:bg-zinc-800 border border-amber-500/60 text-amber-300 font-extrabold text-xs flex items-center gap-1.5 shadow-xl backdrop-blur-md transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                    <span>대국 대기 · 게임 시작을 눌러주세요</span>
+                  </button>
+                )}
 
                 {/* History Viewing Floating Badge */}
                 {isViewingHistory && (
@@ -1837,7 +1879,9 @@ export const App: React.FC = () => {
                 ) : (
                   <div className="w-[120px] h-8 rounded-lg bg-zinc-800/70 border border-zinc-700/60 text-zinc-300 text-xs font-semibold flex items-center justify-center px-2 shrink-0">
                     {playedMoves.length === 0 ? (
-                      <span className="text-zinc-500 text-[11px] font-medium">대국 시작</span>
+                      <span className="text-zinc-500 text-[11px] font-medium">
+                        {!isGameStarted ? '대국 대기' : '대국 시작'}
+                      </span>
                     ) : (
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
@@ -1882,7 +1926,7 @@ export const App: React.FC = () => {
                 color={playerColor}
                 timeRemainingMs={playerColor === 'w' ? whiteTimeMs : blackTimeMs}
                 timeLimit={timeLimit}
-                isActive={chess.turn() === playerColor && !isGameOver}
+                isActive={isGameStarted && chess.turn() === playerColor && !isGameOver}
                 capturedPieces={playerColor === 'w' ? matData.whiteCaptured : matData.blackCaptured}
                 materialDiff={playerColor === 'w' ? matData.whiteDiff : matData.blackDiff}
                 pieceTheme={pieceTheme}
@@ -1913,7 +1957,13 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleRequestHint}
-                    disabled={isGameOver || isAiThinking || isHintLoading || chess.turn() !== playerColor}
+                    disabled={
+                      !isGameStarted ||
+                      isGameOver ||
+                      isAiThinking ||
+                      isHintLoading ||
+                      chess.turn() !== playerColor
+                    }
                     className={`py-1.5 sm:py-2 px-1 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 border transition-all ${
                       activeHint
                         ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-sm shadow-emerald-950/30'
@@ -1932,7 +1982,12 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleUndo}
-                    disabled={isGameOver || isAiThinking || playedMoves.length < (playerColor === 'w' ? 2 : 3)}
+                    disabled={
+                      !isGameStarted ||
+                      isGameOver ||
+                      isAiThinking ||
+                      playedMoves.length < (playerColor === 'w' ? 2 : 3)
+                    }
                     className="py-1.5 sm:py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-zinc-300 text-[11px] font-semibold flex items-center justify-center gap-1 border border-zinc-800"
                     title="한 수 물리기"
                   >
@@ -1944,7 +1999,7 @@ export const App: React.FC = () => {
                     type="button"
                     data-testid="ai-resign-btn"
                     onClick={requestResign}
-                    disabled={isGameOver}
+                    disabled={!isGameStarted || isGameOver}
                     className="py-1.5 sm:py-2 px-1 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-zinc-300 text-[11px] font-semibold flex items-center justify-center gap-1 border border-zinc-800"
                     title="기권하기"
                   >
@@ -1955,12 +2010,16 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     data-testid="ai-new-game-btn"
-                    onClick={() => requestNewGame()}
-                    className="py-1.5 sm:py-2 px-1 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-98 text-zinc-950 text-[11px] font-black flex items-center justify-center gap-1 shadow-sm"
-                    title="새 게임 시작"
+                    onClick={() => (!isGameStarted ? startNewGame() : requestNewGame())}
+                    className={`py-1.5 sm:py-2 px-1 rounded-xl text-[11px] font-black flex items-center justify-center gap-1 transition-all active:scale-98 ${
+                      !isGameStarted
+                        ? 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 ring-2 ring-emerald-300/70 shadow-md shadow-emerald-500/25'
+                        : 'bg-amber-500 hover:bg-amber-400 text-zinc-950 shadow-sm'
+                    }`}
+                    title={!isGameStarted ? '게임 시작' : '새 게임 시작'}
                   >
                     <Play className="w-3.5 h-3.5 fill-zinc-950" />
-                    <span>새 게임</span>
+                    <span>{!isGameStarted ? '게임 시작' : '새 게임'}</span>
                   </button>
                 </div>
               )}
@@ -2422,7 +2481,7 @@ export const App: React.FC = () => {
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-amber-500 text-zinc-950 text-xs font-bold shadow-md shadow-amber-950/30"
               >
-                설정 적용 후 새 게임
+                {!isGameStarted ? '설정 적용 후 게임 시작' : '설정 적용 후 새 게임'}
               </button>
             </div>
           </div>
