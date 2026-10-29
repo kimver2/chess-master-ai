@@ -19,6 +19,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { ChessBoard, PremoveData } from './ChessBoard';
+import { ChessPiece, ChessPieceDefs } from './ChessPieces';
 import { AvatarIcon } from './AvatarIcon';
 import { UserProfile } from '../types/profile';
 import {
@@ -163,6 +164,10 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [liveClockTick, setLiveClockTick] = useState<number>(Date.now());
   const [onlineRatingDelta, setOnlineRatingDelta] = useState<number | null>(null);
+
+  // Quick Match Timer State
+  const [matchingStartedAt, setMatchingStartedAt] = useState<number | null>(null);
+  const [matchingElapsedSec, setMatchingElapsedSec] = useState<number>(0);
 
   // Premove & Quick Emoji Stamps State
   const [premove, setPremove] = useState<PremoveData | null>(null);
@@ -393,6 +398,21 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     return () => clearInterval(timer);
   }, [isLocalMode, viewState, gameData?.status, gameData?.timeLimit]);
 
+  // Quick Matchmaking search timer ticker
+  useEffect(() => {
+    if (viewState !== 'matching' || !matchingStartedAt) return;
+    const interval = setInterval(() => {
+      setMatchingElapsedSec(Math.floor((Date.now() - matchingStartedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [viewState, matchingStartedAt]);
+
+  const formatMatchingElapsed = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
   // Compute live online clocks
   const { displayOnlineWhiteMs, displayOnlineBlackMs } = useMemo(() => {
     if (!gameData || !gameData.timeLimit || gameData.timeLimit === 'unlimited') {
@@ -489,6 +509,57 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     return c;
   }, [gameData?.fen]);
 
+  const currentChess = isLocalMode ? localChess : onlineChess;
+
+  // Material & captured pieces calculation (computed at top level so no React hook violation on mode switch)
+  const pvpMaterialData = useMemo(() => {
+    const board = currentChess.board();
+    const values: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+    let whiteScore = 0;
+    let blackScore = 0;
+
+    const currentWhiteCounts: Record<'p' | 'n' | 'b' | 'r' | 'q', number> = { p: 0, n: 0, b: 0, r: 0, q: 0 };
+    const currentBlackCounts: Record<'p' | 'n' | 'b' | 'r' | 'q', number> = { p: 0, n: 0, b: 0, r: 0, q: 0 };
+
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const piece = board[r][c];
+        if (piece && piece.type !== 'k') {
+          if (piece.color === 'w') {
+            whiteScore += values[piece.type] || 0;
+            currentWhiteCounts[piece.type as 'p' | 'n' | 'b' | 'r' | 'q']++;
+          } else {
+            blackScore += values[piece.type] || 0;
+            currentBlackCounts[piece.type as 'p' | 'n' | 'b' | 'r' | 'q']++;
+          }
+        }
+      }
+    }
+
+    const whiteCaptured: Record<'p' | 'n' | 'b' | 'r' | 'q', number> = {
+      p: Math.max(0, 8 - currentBlackCounts.p),
+      n: Math.max(0, 2 - currentBlackCounts.n),
+      b: Math.max(0, 2 - currentBlackCounts.b),
+      r: Math.max(0, 2 - currentBlackCounts.r),
+      q: Math.max(0, 1 - currentBlackCounts.q),
+    };
+
+    const blackCaptured: Record<'p' | 'n' | 'b' | 'r' | 'q', number> = {
+      p: Math.max(0, 8 - currentWhiteCounts.p),
+      n: Math.max(0, 2 - currentWhiteCounts.p),
+      b: Math.max(0, 2 - currentWhiteCounts.b),
+      r: Math.max(0, 2 - currentWhiteCounts.r),
+      q: Math.max(0, 1 - currentWhiteCounts.q),
+    };
+
+    return {
+      whiteCaptured,
+      blackCaptured,
+      whiteDiff: Math.max(0, whiteScore - blackScore),
+      blackDiff: Math.max(0, blackScore - whiteScore),
+    };
+  }, [currentChess]);
+
   // 1. Create Friend Room
   const handleCreateFriendRoom = async (side: 'white' | 'black' | 'random' = 'random') => {
     setErrorMessage(null);
@@ -534,15 +605,19 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     setOnlineRatingDelta(null);
     if (onWatchRematchGame) onWatchRematchGame(null);
     setViewState('matching');
+    setMatchingStartedAt(Date.now());
+    setMatchingElapsedSec(0);
 
     const cancelFn = startQuickMatch(
       playerInfo,
       (gameId) => {
+        setMatchingStartedAt(null);
         setActiveGameId(gameId);
         setViewState('in_game');
         soundManager.gameStart();
       },
       (err) => {
+        setMatchingStartedAt(null);
         setErrorMessage(err);
         setViewState('lobby');
       },
@@ -553,6 +628,8 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
   };
 
   const handleCancelMatching = () => {
+    setMatchingStartedAt(null);
+    setMatchingElapsedSec(0);
     if (cleanupMatchmakingRef.current) {
       cleanupMatchmakingRef.current();
       cleanupMatchmakingRef.current = null;
@@ -910,6 +987,8 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
     }
     if (cleanupMatchmakingRef.current) cleanupMatchmakingRef.current();
     if (unsubscribeGameRef.current) unsubscribeGameRef.current();
+    setMatchingStartedAt(null);
+    setMatchingElapsedSec(0);
     setActiveGameId(null);
     setGameData(null);
     setPremove(null);
@@ -1028,8 +1107,15 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
               <Swords className="w-6 h-6 text-amber-300 absolute" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">상대 플레이어를 찾는 중...</h3>
-              <p className="text-xs text-zinc-400 mt-1">
+              <h3 className="text-base font-bold text-white flex items-center justify-center gap-1.5">
+                <span>상대 플레이어 탐색 중</span>
+                <span className="inline-block w-4 text-left animate-pulse">...</span>
+              </h3>
+              <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-950 border border-zinc-800 text-xs font-mono font-bold text-amber-300">
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                <span data-testid="matching-elapsed-time">탐색 시간 {formatMatchingElapsed(matchingElapsedSec)}</span>
+              </div>
+              <p className="text-xs text-zinc-400 mt-2">
                 제한 시간 ({selectedTimeLimit === '5m' ? '5분' : selectedTimeLimit === '10m' ? '10분' : '무제한'}) 기준으로 자동 매칭됩니다.
               </p>
             </div>
@@ -1147,6 +1233,7 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
 
                 <button
                   type="button"
+                  data-testid="start-quick-match-btn"
                   onClick={handleStartQuickMatch}
                   className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 text-zinc-950 text-xs font-black shadow-md shadow-amber-950/40 shrink-0 transition-transform active:scale-95"
                 >
@@ -1223,7 +1310,6 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
   // ==========================================
   // VIEW: IN-GAME MULTIPLAYER BOARD
   // ==========================================
-  const currentChess = isLocalMode ? localChess : onlineChess;
   const isMyTurn = isLocalMode
     ? true
     : (myOnlineColor === 'w' && gameData?.currentTurn === 'w') ||
@@ -1315,8 +1401,23 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
       ? PVP_EMOJI_STAMPS.find((s) => s.id === activeReaction.emojiId)
       : null;
 
+  const topCaptured = topColor === 'w' ? pvpMaterialData.whiteCaptured : pvpMaterialData.blackCaptured;
+  const topMaterialDiff = topColor === 'w' ? pvpMaterialData.whiteDiff : pvpMaterialData.blackDiff;
+
+  const bottomCaptured = bottomColor === 'w' ? pvpMaterialData.whiteCaptured : pvpMaterialData.blackCaptured;
+  const bottomMaterialDiff = bottomColor === 'w' ? pvpMaterialData.whiteDiff : pvpMaterialData.blackDiff;
+
+  const isTopTurn = currentChess.turn() === topColor && !isGameOver;
+  const isTopLowTime = isTopTurn && topClockMs !== null && topClockMs <= 30000 && activeTimeLimit !== 'unlimited';
+  const isTopCriticalLowTime = isTopTurn && topClockMs !== null && topClockMs <= 10000 && activeTimeLimit !== 'unlimited';
+
+  const isBottomTurn = currentChess.turn() === bottomColor && !isGameOver;
+  const isBottomLowTime = isBottomTurn && bottomClockMs !== null && bottomClockMs <= 30000 && activeTimeLimit !== 'unlimited';
+  const isBottomCriticalLowTime = isBottomTurn && bottomClockMs !== null && bottomClockMs <= 10000 && activeTimeLimit !== 'unlimited';
+
   return (
     <div className="flex-1 flex flex-col p-2.5 sm:p-3 space-y-2 max-w-md mx-auto w-full select-none overflow-y-auto">
+      <ChessPieceDefs />
       {/* Top Bar: Opponent Player Info (or Black in Local) */}
       <div className="relative p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-between gap-2 shrink-0">
         {opponentStamp && (
@@ -1335,11 +1436,42 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
             size="sm"
           />
           <div className="min-w-0">
-            <div className="text-xs font-bold text-white truncate">
-              {isLocalMode ? '흑 (Player 2)' : opponentPlayer?.nickname || '상대 플레이어'}
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-white truncate">
+                {isLocalMode ? '흑 (Player 2)' : opponentPlayer?.nickname || '상대 플레이어'}
+              </span>
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  topColor === 'w'
+                    ? 'bg-amber-100 border border-zinc-400'
+                    : 'bg-zinc-950 border border-zinc-500'
+                }`}
+              />
             </div>
-            <div className="text-[10px] text-zinc-400 font-mono">
-              {isLocalMode ? '마주보기 참가자' : `${opponentPlayer?.rating || 1000} Elo`}
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-[10px] text-zinc-400 font-mono">
+                {isLocalMode ? '마주보기 참가자' : `${opponentPlayer?.rating || 1000} Elo`}
+              </span>
+              {/* Captured Pieces & Material Diff */}
+              <div className="flex items-center gap-0.5 h-3.5">
+                {(['p', 'n', 'b', 'r', 'q'] as const).map((pType) => {
+                  const count = topCaptured[pType] || 0;
+                  if (count === 0) return null;
+                  return (
+                    <div key={pType} className="flex items-center">
+                      <div className="w-3.5 h-3.5">
+                        <ChessPiece type={pType} color={topColor === 'w' ? 'b' : 'w'} theme={pieceTheme} />
+                      </div>
+                      {count > 1 && (
+                        <span className="text-[9px] text-zinc-400 font-bold -ml-0.5">×{count}</span>
+                      )}
+                    </div>
+                  );
+                })}
+                {topMaterialDiff > 0 && (
+                  <span className="text-[10px] font-black text-emerald-400 ml-0.5">+{topMaterialDiff}</span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1366,8 +1498,12 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
           {/* Top Player Clock */}
           {activeTimeLimit !== 'unlimited' && (
             <div
-              className={`px-2.5 py-1 rounded-lg font-mono text-xs font-black border ${
-                currentChess.turn() === topColor && !isGameOver
+              className={`px-2.5 py-1 rounded-lg font-mono text-xs font-black border transition-all ${
+                isTopCriticalLowTime
+                  ? 'bg-rose-950/90 text-rose-300 border-rose-500 ring-2 ring-rose-500/40 animate-pulse font-black'
+                  : isTopLowTime
+                  ? 'bg-amber-950/80 text-amber-300 border-amber-500/60 animate-pulse'
+                  : isTopTurn
                   ? 'bg-amber-500 text-zinc-950 border-amber-400'
                   : 'bg-zinc-950 text-zinc-300 border-zinc-800'
               }`}
@@ -1560,13 +1696,44 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
             size="sm"
           />
           <div className="min-w-0">
-            <div className="text-xs font-bold text-white truncate">
-              {isLocalMode ? '백 (Player 1)' : `${playerInfo.nickname} (나)`}
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-white truncate">
+                {isLocalMode ? '백 (Player 1)' : `${playerInfo.nickname} (나)`}
+              </span>
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  bottomColor === 'w'
+                    ? 'bg-amber-100 border border-zinc-400'
+                    : 'bg-zinc-950 border border-zinc-500'
+                }`}
+              />
             </div>
-            <div className="text-[10px] text-zinc-400 font-mono">
-              {isLocalMode
-                ? `${currentChess.turn() === 'w' ? '백 차례' : '흑 차례'}`
-                : `${playerInfo.rating} Elo`}
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-[10px] text-zinc-400 font-mono">
+                {isLocalMode
+                  ? `${currentChess.turn() === 'w' ? '백 차례' : '흑 차례'}`
+                  : `${playerInfo.rating} Elo`}
+              </span>
+              {/* Captured Pieces & Material Diff */}
+              <div className="flex items-center gap-0.5 h-3.5">
+                {(['p', 'n', 'b', 'r', 'q'] as const).map((pType) => {
+                  const count = bottomCaptured[pType] || 0;
+                  if (count === 0) return null;
+                  return (
+                    <div key={pType} className="flex items-center">
+                      <div className="w-3.5 h-3.5">
+                        <ChessPiece type={pType} color={bottomColor === 'w' ? 'b' : 'w'} theme={pieceTheme} />
+                      </div>
+                      {count > 1 && (
+                        <span className="text-[9px] text-zinc-400 font-bold -ml-0.5">×{count}</span>
+                      )}
+                    </div>
+                  );
+                })}
+                {bottomMaterialDiff > 0 && (
+                  <span className="text-[10px] font-black text-emerald-400 ml-0.5">+{bottomMaterialDiff}</span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1613,8 +1780,12 @@ export const MultiplayerView: React.FC<MultiplayerViewProps> = ({
 
           {activeTimeLimit !== 'unlimited' && (
             <div
-              className={`px-2.5 py-1 rounded-lg font-mono text-xs font-black border ${
-                currentChess.turn() === bottomColor && !isGameOver
+              className={`px-2.5 py-1 rounded-lg font-mono text-xs font-black border transition-all ${
+                isBottomCriticalLowTime
+                  ? 'bg-rose-950/90 text-rose-300 border-rose-500 ring-2 ring-rose-500/40 animate-pulse font-black'
+                  : isBottomLowTime
+                  ? 'bg-amber-950/80 text-amber-300 border-amber-500/60 animate-pulse'
+                  : isBottomTurn
                   ? 'bg-amber-500 text-zinc-950 border-amber-400'
                   : 'bg-zinc-950 text-zinc-300 border-zinc-800'
               }`}

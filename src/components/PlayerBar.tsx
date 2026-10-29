@@ -39,7 +39,8 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const isLowTime = timeRemainingMs !== null && timeRemainingMs <= 30000 && timeLimit !== 'unlimited';
+  const isLowTime = isActive && timeRemainingMs !== null && timeRemainingMs <= 30000 && timeLimit !== 'unlimited';
+  const isCriticalLowTime = isActive && timeRemainingMs !== null && timeRemainingMs <= 10000 && timeLimit !== 'unlimited';
 
   return (
     <div
@@ -100,9 +101,11 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
 
       {/* Timer Badge */}
       <div
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-sm font-bold tracking-wider ${
-          isLowTime
-            ? 'bg-red-950/80 text-red-400 border border-red-500/50 animate-pulse'
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-sm font-bold tracking-wider transition-all ${
+          isCriticalLowTime
+            ? 'bg-rose-950/95 text-rose-300 border border-rose-500 ring-2 ring-rose-500/40 animate-pulse font-black'
+            : isLowTime
+            ? 'bg-amber-950/85 text-amber-300 border border-amber-500/60 font-extrabold animate-pulse'
             : isActive
             ? 'bg-zinc-700/80 text-amber-300 border border-amber-500/30'
             : 'bg-zinc-800 text-zinc-400'

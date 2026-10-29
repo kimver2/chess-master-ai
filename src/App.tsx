@@ -1513,6 +1513,53 @@ export const App: React.FC = () => {
     return null;
   };
 
+  // Play vs Stockfish AI starting from a specific reviewed move FEN
+  const handlePlayFromReviewPosition = (fen: string, side: PieceColor, moveNumber?: number) => {
+    let loadedChess: Chess;
+    try {
+      loadedChess = new Chess(fen);
+    } catch {
+      return;
+    }
+    if (loadedChess.isGameOver()) return;
+
+    setShowReviewModal(false);
+    clearActiveGame();
+    setActiveTab('play');
+    const session = ++gameSessionRef.current;
+    setIsGameStarted(true);
+    setIsGameOver(false);
+    setShowGameOverModal(false);
+    setGameResult('ongoing');
+    setGameOverReason(null);
+    setLastGameReward(null);
+    setPremove(null);
+    setActiveHint(null);
+    setGuidedOpening(null);
+    setGuidedStep(0);
+    setViewPlyIndex(null);
+    setPlayerColor(side);
+    setChosenSide(side === 'w' ? 'white' : 'black');
+    setChess(loadedChess);
+    setPlayedMoves([]);
+    setLastMove(null);
+
+    const ms = timeLimit === '5m' ? 300000 : timeLimit === '10m' ? 600000 : null;
+    setWhiteTimeMs(ms);
+    setBlackTimeMs(ms);
+    gameStartTimeRef.current = Date.now();
+
+    setResumedBannerMessage(
+      `♟️ 복기 국면${moveNumber ? `(${moveNumber}수)` : ''}부터 AI와 대국을 시작합니다! (${side === 'w' ? '백' : '흑'} 차례)`
+    );
+    setTimeout(() => {
+      if (gameSessionRef.current === session) {
+        setResumedBannerMessage(null);
+      }
+    }, 5000);
+    soundManager.gameStart();
+  };
+
   // Material & captured pieces calculation (accurately tracks captures and promotions)
   const calculatePiecesAndMaterial = (
     targetChess: Chess = displayChess,
@@ -2520,6 +2567,7 @@ export const App: React.FC = () => {
             pieceTheme={pieceTheme}
             boardTheme={boardTheme}
             onClose={() => setShowReviewModal(false)}
+            onPlayFromPosition={handlePlayFromReviewPosition}
           />
         )}
 

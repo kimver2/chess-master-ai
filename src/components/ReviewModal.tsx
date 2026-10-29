@@ -18,6 +18,7 @@ import {
   TrendingUp,
   RotateCcw,
   Target,
+  Bot,
 } from 'lucide-react';
 
 interface ReviewModalProps {
@@ -26,6 +27,7 @@ interface ReviewModalProps {
   playerColor: 'w' | 'b';
   pieceTheme?: PieceTheme;
   boardTheme?: BoardTheme;
+  onPlayFromPosition?: (fen: string, side: 'w' | 'b', moveNumber?: number) => void;
 }
 
 export const ReviewModal: React.FC<ReviewModalProps> = ({
@@ -34,6 +36,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   playerColor,
   pieceTheme = 'metal',
   boardTheme = 'marble',
+  onPlayFromPosition,
 }) => {
   const isBadMove = (move?: MoveAnalysis) => {
     if (!move) return false;
@@ -797,6 +800,27 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   >
                     <Target className="w-4 h-4 shrink-0" />
                     <span>이 장면 직접 다시 두어보기 (실수 교정 훈련)</span>
+                  </button>
+                )}
+
+                {/* Play from this position vs AI */}
+                {onPlayFromPosition && currentMove && (
+                  <button
+                    type="button"
+                    data-testid="play-from-review-pos-btn"
+                    onClick={() =>
+                      onPlayFromPosition(
+                        currentMove.fenBefore,
+                        currentMove.color,
+                        currentMove.moveNumber
+                      )
+                    }
+                    className="w-full py-2 px-3 rounded-xl bg-zinc-800/90 hover:bg-zinc-750 text-amber-300 hover:text-amber-200 font-bold text-xs border border-zinc-700/80 flex items-center justify-center gap-1.5 transition-all active:scale-98 shadow-sm"
+                  >
+                    <Bot className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>
+                      ♟️ 이 국면({currentMove.moveNumber}수 {currentMove.color === 'w' ? '백' : '흑'} 차례)부터 AI와 대국하기
+                    </span>
                   </button>
                 )}
 
