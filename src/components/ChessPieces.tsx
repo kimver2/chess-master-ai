@@ -69,6 +69,8 @@ export const ChessPiece: React.FC<PieceProps> = ({
       <img
         src={`/pieces/${theme}/${fileName}`}
         alt={`${color}${type}`}
+        decoding="async"
+        loading="eager"
         className={`${className} object-contain pointer-events-none drop-shadow-md select-none transition-transform`}
         draggable={false}
         onError={() => setImgError(true)}

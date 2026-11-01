@@ -7,6 +7,7 @@ import {
   BarChart2,
   HelpCircle,
   ShieldCheck,
+  Zap,
 } from 'lucide-react';
 import {
   BoardTheme,
@@ -38,6 +39,8 @@ interface SettingsModalProps {
   onChosenSideChange: (s: PlayerSide) => void;
   difficulty: DifficultyLevel;
   onDifficultyChange: (d: DifficultyLevel) => void;
+  perfModeEnabled?: boolean;
+  onTogglePerfMode?: (enabled: boolean) => void;
   onReplayTourGuide: () => void;
   onApplyAndStartGame: () => void;
 }
@@ -58,6 +61,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onToggleEvalBar,
   confirmMoveEnabled,
   onToggleConfirmMove,
+  perfModeEnabled = false,
+  onTogglePerfMode,
   timeLimit,
   onTimeLimitChange,
   chosenSide,
@@ -228,6 +233,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </p>
         </div>
 
+        {/* Low-Spec Performance Mode (Lag Reduction & Battery Saver) */}
+        <div className="space-y-1.5 pt-1 border-t border-zinc-800/80">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              저사양 성능 모드 (렉 방지 & 배터리 절약)
+            </label>
+            <button
+              type="button"
+              data-testid="toggle-perf-mode-setting"
+              onClick={() => onTogglePerfMode?.(!perfModeEnabled)}
+              className={`px-3 py-1 rounded-lg text-xs font-bold border transition-all ${
+                perfModeEnabled
+                  ? 'bg-amber-500 border-amber-400 text-zinc-950 shadow-sm'
+                  : 'bg-zinc-800 border-zinc-700 text-zinc-400'
+              }`}
+            >
+              {perfModeEnabled ? '켜짐' : '꺼짐'}
+            </button>
+          </div>
+          <p className="text-[10px] text-zinc-400 leading-tight">
+            배경 블러와 그림자 효과를 비활성화하여 저사양 스마트폰에서도 부드럽게 60fps로 대국합니다.
+          </p>
+        </div>
+
         {/* Time Control */}
         <div className="space-y-1.5 pt-1 border-t border-zinc-800/80">
           <label className="text-xs font-semibold text-zinc-300">대국 제한 시간</label>
@@ -337,6 +367,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div className="pt-2 flex gap-2">
           <button
             type="button"
+            data-testid="close-settings-btn"
             onClick={onClose}
             className="flex-1 py-2.5 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-bold"
           >

@@ -143,6 +143,28 @@ export const App: React.FC = () => {
   const [confirmMoveEnabled, setConfirmMoveEnabled] = useState<boolean>(() =>
     loadConfirmMoveEnabled()
   );
+  const [perfModeEnabled, setPerfModeEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('chess_perf_mode') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    if (perfModeEnabled) {
+      document.body.classList.add('perf-mode');
+    } else {
+      document.body.classList.remove('perf-mode');
+    }
+  }, [perfModeEnabled]);
+
+  const handleTogglePerfMode = (enabled: boolean) => {
+    setPerfModeEnabled(enabled);
+    try {
+      localStorage.setItem('chess_perf_mode', String(enabled));
+    } catch {}
+  };
 
   const handlePieceThemeChange = (t: PieceTheme) => {
     setPieceTheme(t);
@@ -1755,6 +1777,7 @@ export const App: React.FC = () => {
           </button>
           <button
             type="button"
+            data-testid="open-settings-btn"
             onClick={() => setShowSettingsModal(true)}
             className="p-1.5 sm:p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
             title="게임 설정"
@@ -2524,6 +2547,8 @@ export const App: React.FC = () => {
         onToggleEvalBar={handleToggleEvalBar}
         confirmMoveEnabled={confirmMoveEnabled}
         onToggleConfirmMove={handleToggleConfirmMove}
+        perfModeEnabled={perfModeEnabled}
+        onTogglePerfMode={handleTogglePerfMode}
         timeLimit={timeLimit}
         onTimeLimitChange={setTimeLimit}
         chosenSide={chosenSide}
