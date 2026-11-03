@@ -79,7 +79,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl max-w-sm w-full space-y-4 max-h-[88vh] overflow-y-auto shadow-2xl">
         <h3 className="text-base font-bold text-zinc-100 border-b border-zinc-800 pb-2 flex items-center justify-between">
           <span>게임 환경 설정</span>
-          <span className="text-[11px] text-zinc-500 font-normal">오프라인 완벽 지원</span>
+          <span
+            data-testid="app-version-badge"
+            className="text-[11px] font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30"
+          >
+            v2.4 (Build 15)
+          </span>
         </h3>
 
         {/* Piece Theme Selection */}
@@ -380,6 +385,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           >
             {!isGameStarted ? '설정 적용 후 게임 시작' : '설정 적용 후 새 게임'}
           </button>
+        </div>
+
+        {/* Build & Performance Status Footer */}
+        <div className="pt-1 text-center text-[10px] text-zinc-500 flex items-center justify-center gap-2">
+          <span>Chess Master AI v2.4 (Build 15)</span>
+          <span>•</span>
+          <span className={perfModeEnabled ? 'text-amber-400 font-bold' : 'text-zinc-500'}>
+            {perfModeEnabled ? '⚡ 저사양 최적화 활성' : '표준 모드'}
+          </span>
         </div>
       </div>
     </div>

@@ -672,7 +672,7 @@ const ChessBoardInner: React.FC<ChessBoardProps> = ({
                 key={square}
                 data-square={square}
                 onClick={() => handleSquareClick(square)}
-                className={`relative flex items-center justify-center cursor-pointer transition-colors duration-150 ${
+                className={`relative flex items-center justify-center cursor-pointer ${
                   isLastMoveTo ? 'z-10' : ''
                 } ${bgClass}`}
               >
@@ -715,7 +715,7 @@ const ChessBoardInner: React.FC<ChessBoardProps> = ({
                     }`}
                   >
                     <div
-                      className={`w-[88%] h-[88%] flex items-center justify-center drop-shadow-md transition-transform ${
+                      className={`w-[88%] h-[88%] flex items-center justify-center ${
                         shouldRotatePiece(piece.color) ? 'rotate-180' : ''
                       }`}
                     >

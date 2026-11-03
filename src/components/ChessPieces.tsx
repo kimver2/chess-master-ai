@@ -71,7 +71,7 @@ export const ChessPiece: React.FC<PieceProps> = ({
         alt={`${color}${type}`}
         decoding="async"
         loading="eager"
-        className={`${className} object-contain pointer-events-none drop-shadow-md select-none transition-transform`}
+        className={`${className} object-contain pointer-events-none piece-shadow select-none`}
         draggable={false}
         onError={() => setImgError(true)}
       />
@@ -88,7 +88,7 @@ export const ChessPiece: React.FC<PieceProps> = ({
   switch (type) {
     case 'p': // Pawn
       return (
-        <svg viewBox="0 0 45 45" className={className} filter="url(#piece-depth-shadow)">
+        <svg viewBox="0 0 45 45" className={className}>
           <g stroke={strokeColor} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
             {/* Base Pedestal */}
             <path
@@ -116,7 +116,7 @@ export const ChessPiece: React.FC<PieceProps> = ({
 
     case 'r': // Rook
       return (
-        <svg viewBox="0 0 45 45" className={className} filter="url(#piece-depth-shadow)">
+        <svg viewBox="0 0 45 45" className={className}>
           <g stroke={strokeColor} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
             {/* Base */}
             <path d="M 9,41 L 36,41 L 37,43 L 8,43 Z" fill={bodyGrad} />
@@ -146,7 +146,7 @@ export const ChessPiece: React.FC<PieceProps> = ({
 
     case 'n': // Knight
       return (
-        <svg viewBox="0 0 45 45" className={className} filter="url(#piece-depth-shadow)">
+        <svg viewBox="0 0 45 45" className={className}>
           <g stroke={strokeColor} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
             {/* Base */}
             <path d="M 10,41 L 35,41 L 37,43 L 8,43 Z" fill={bodyGrad} />
@@ -180,7 +180,7 @@ export const ChessPiece: React.FC<PieceProps> = ({
 
     case 'b': // Bishop
       return (
-        <svg viewBox="0 0 45 45" className={className} filter="url(#piece-depth-shadow)">
+        <svg viewBox="0 0 45 45" className={className}>
           <g stroke={strokeColor} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
             {/* Base */}
             <path d="M 10,41 L 35,41 L 37,43 L 8,43 Z" fill={bodyGrad} />
@@ -210,7 +210,7 @@ export const ChessPiece: React.FC<PieceProps> = ({
 
     case 'q': // Queen
       return (
-        <svg viewBox="0 0 45 45" className={className} filter="url(#piece-depth-shadow)">
+        <svg viewBox="0 0 45 45" className={className}>
           <g stroke={strokeColor} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
             {/* Base */}
             <path d="M 9,41 L 36,41 L 38,43 L 7,43 Z" fill={bodyGrad} />
@@ -239,7 +239,7 @@ export const ChessPiece: React.FC<PieceProps> = ({
 
     case 'k': // King
       return (
-        <svg viewBox="0 0 45 45" className={className} filter="url(#piece-depth-shadow)">
+        <svg viewBox="0 0 45 45" className={className}>
           <g stroke={strokeColor} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
             {/* Base */}
             <path d="M 9,41 L 36,41 L 38,43 L 7,43 Z" fill={bodyGrad} />

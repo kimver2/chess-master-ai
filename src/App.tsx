@@ -145,7 +145,15 @@ export const App: React.FC = () => {
   );
   const [perfModeEnabled, setPerfModeEnabled] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('chess_perf_mode') === 'true';
+      const saved = localStorage.getItem('chess_perf_mode');
+      if (saved !== null) return saved === 'true';
+      // Auto-detect low-spec or constrained mobile devices (<= 4 cores or <= 4GB RAM)
+      const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
+      const mem =
+        typeof navigator !== 'undefined'
+          ? (navigator as unknown as { deviceMemory?: number }).deviceMemory || 4
+          : 4;
+      return cores <= 4 || mem <= 4;
     } catch {
       return false;
     }
@@ -1220,9 +1228,9 @@ export const App: React.FC = () => {
       const best = await stockfishService.getBestMove(fenBefore, aiLevel);
       if (gameSessionRef.current !== session) return;
 
-      // AI가 너무 즉시 두지 않고 2초간 자연스럽게 수를 생각하도록 딜레이 적용
+      // AI 착수 딜레이 최적화 (기존 2초 강제 대기를 700ms, 저사양 모드 400ms로 단축하여 경쾌한 반응성 보장)
       const elapsed = Date.now() - thinkStartTime;
-      const targetDelayMs = 2000; // 2초
+      const targetDelayMs = perfModeEnabled ? 400 : 700;
       if (elapsed < targetDelayMs) {
         await new Promise((resolve) => setTimeout(resolve, targetDelayMs - elapsed));
       }

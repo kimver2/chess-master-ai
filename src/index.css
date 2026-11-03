@@ -38,8 +38,19 @@
 }
 
 /* Low-Spec Performance Mode (렉 방지 및 배터리 절약 모드) */
+.piece-shadow {
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.4));
+}
+
 body.perf-mode * {
   text-shadow: none !important;
+}
+
+body.perf-mode .piece-shadow,
+body.perf-mode img,
+body.perf-mode [data-square] * {
+  filter: none !important;
+  transition: none !important;
 }
 
 body.perf-mode .backdrop-blur-md,
